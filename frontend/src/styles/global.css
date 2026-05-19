@@ -1,0 +1,29 @@
+:root {
+  /* Soviet-era palette */
+  --bg: #1a1a1a;
+  --bg-elev: #2a2a2a;
+  --fg: #e8e2d0;
+  --accent: #c8472b;     /* faded red */
+  --rust: #8a5a3b;
+  --mud: #4a3a2a;
+  --snow: #f4f1e8;
+  --pothole: #0a0a0a;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+}

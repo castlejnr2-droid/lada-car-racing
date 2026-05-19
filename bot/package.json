@@ -1,0 +1,16 @@
+{
+  "name": "lada-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lada Car Racing — Telegram bot for lobby alerts and race notifications",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3"
+  }
+}
