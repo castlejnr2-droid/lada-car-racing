@@ -1,0 +1,12 @@
+{
+  "projects": [
+    {
+      "name": "LadaEscrow",
+      "path": "./contracts/lada_escrow.tact",
+      "output": "./build/LadaEscrow",
+      "options": {
+        "debug": true
+      }
+    }
+  ]
+}
