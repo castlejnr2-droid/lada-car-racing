@@ -1,11 +1,10 @@
 import { Markup } from 'telegraf';
-import { welcome } from '../lib/messages.js';
 import { config } from '../config.js';
 
-export function registerStart(bot) {
-  bot.start((ctx) =>
-    ctx.replyWithHTML(
-      welcome(ctx.from.first_name || ctx.from.username || 'comrade'),
+export function registerPlay(bot) {
+  bot.command('play', (ctx) =>
+    ctx.reply(
+      'Engine started. Open the garage:',
       Markup.inlineKeyboard([
         Markup.button.webApp('🚗 Open Lada Racing', config.miniAppUrl),
       ]),
