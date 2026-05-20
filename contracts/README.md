@@ -55,10 +55,32 @@ Frontend RNG seed comes from `combinedSeed` (uint256). Pass it to `frontend/src/
 
 ```bash
 npm install
-npm run build         # compile lada_escrow.tact → build/LadaEscrow/...
+npm run build              # compile lada_escrow.tact → build/LadaEscrow/...
 npm test
-npm run deploy        # interactive — pick network and signing wallet
+npm run deploy             # interactive Blueprint deploy (testnet by default)
 ```
+
+### If `npm run deploy` errors with "Cannot read properties of undefined (reading 'slice')"
+
+That's a Blueprint 0.27 / Node-version interaction: Blueprint's `findScripts` does
+`dirent.path.slice(...)` and `Dirent.path` is `undefined` on Node 18.17–20.0 when
+combined with `recursive: true` + `withFileTypes: true`. Two ways out:
+
+1. **Upgrade Node** to 20.1+ (ideally 22.x) and re-run `npm run deploy`.
+2. **Bypass Blueprint's CLI** with the standalone deploy script (no `findScripts`
+   in its path):
+
+   ```bash
+   npm run build                           # still need the compiled wrapper
+   WALLET_MNEMONIC="24-word seed phrase" \
+   HOUSE_WALLET=0Q…           \
+   LADA_JETTON_WALLET=0Q…     \             # optional on first deploy
+   npm run deploy:standalone
+   ```
+
+   The standalone deploy lives in `tools/deploy.ts` (outside `scripts/` so
+   Blueprint's auto-discovery never touches it). It uses `TonClient` + your
+   24-word mnemonic to broadcast directly to the toncenter testnet RPC.
 
 After `npm run build`, the generated wrapper at `build/LadaEscrow/tact_LadaEscrow.ts` exposes typed message constructors and `LadaEscrow.fromInit(owner, houseWallet, ladaJettonWallet)`. Tests and the deploy script should swap to it once it exists.
 

@@ -2,12 +2,15 @@
   "name": "lada-contracts",
   "version": "0.1.0",
   "private": true,
-  "description": "Lada Car Racing — Tact escrow contract on TON, built with Blueprint",
+  "description": "Lada Car Racing \u2014 Tact escrow contract on TON, built with Blueprint",
   "scripts": {
     "start": "blueprint",
-    "build": "blueprint build",
+    "build": "blueprint build LadaEscrow",
+    "build:tact": "tact --config tact.config.json",
     "test": "jest --verbose",
-    "deploy": "blueprint run deploy"
+    "deploy": "blueprint run deployLadaEscrow",
+    "deploy:standalone": "ts-node --transpile-only tools/deploy.ts",
+    "postinstall": "node tools/patch-blueprint.cjs"
   },
   "dependencies": {
     "@ton/core": "^0.59.0",

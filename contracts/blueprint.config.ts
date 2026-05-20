@@ -1,18 +1,21 @@
 import { Config } from '@ton/blueprint';
 
 /**
- * Blueprint config. Defaults `blueprint run`/`build` to TON testnet using
- * the toncenter v2 JSON-RPC endpoint specified by the project.
+ * Blueprint config. Sets the default network to testnet so the CLI doesn't
+ * prompt every run; pass `--mainnet` to override.
  *
- * To deploy to mainnet, pass `--mainnet` to the CLI, e.g.
- *   npx blueprint run deployLadaEscrow --mainnet
+ * Using the string form `'testnet'` (rather than a CustomNetwork object) is
+ * deliberate — Blueprint's CLI handles known-network strings everywhere,
+ * whereas a CustomNetwork object can interact badly with some prompts.
+ *
+ * To target a specific endpoint (e.g. toncenter with your own key) pass it
+ * on the CLI:
+ *   npx blueprint run deployLadaEscrow --custom \
+ *     --custom-key=YOUR_KEY \
+ *     --custom-version=v2 \
+ *     --custom-type=testnet \
+ *     https://testnet.toncenter.com/api/v2/jsonRPC
  */
 export const config: Config = {
-  network: {
-    endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC',
-    type: 'testnet',
-    version: 'v2',
-    // Optional: bump rate limits by setting TONCENTER_KEY in your env.
-    key: process.env.TONCENTER_KEY,
-  },
+  network: 'testnet',
 };
