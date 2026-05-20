@@ -1,5 +1,12 @@
 import { api } from './client.js';
 
-export const fetchLobbies = () => api('/lobbies');
-export const createLobby  = (body) => api('/lobbies', { method: 'POST', body: JSON.stringify(body) });
-export const joinLobby    = (id)   => api(`/lobbies/${id}/join`, { method: 'POST' });
+export const fetchLobbies = ()         => api('/api/lobbies');
+export const createLobby  = (body)     => api('/api/lobbies', {
+  method: 'POST', body: JSON.stringify(body),
+});
+export const joinLobby = (id, address) => api(`/api/lobbies/${id}/join`, {
+  method: 'POST', body: JSON.stringify({ address }),
+});
+export const cancelLobby = (id, address) => api(`/api/lobbies/${id}`, {
+  method: 'DELETE', body: JSON.stringify({ address }),
+});

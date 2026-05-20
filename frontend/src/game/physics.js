@@ -1,22 +1,25 @@
 /**
  * Pure race physics. Given an RNG, produces:
- *   - a pothole layout for each lane
+ *   - per-lane pothole positions along the track
  *   - per-tick speed for each car (slowed when hitting a pothole)
  *
- * Pure file: no DOM, no blockchain, no I/O. Easy to unit test.
+ * Pure file: no DOM, no blockchain, no I/O.
  */
 
-const TRACK_LENGTH = 1000;
-const POTHOLES_PER_LANE = 12;
-const BASE_SPEED = 6;
-const POTHOLE_PENALTY = 0.4;
+export const TRACK_LENGTH      = 1200;
+export const POTHOLES_PER_LANE = 14;
+const BASE_SPEED               = 6;
+const POTHOLE_PENALTY          = 0.35;
+const POTHOLE_HIT_RADIUS       = 5;
+const MAX_TICKS                = 600;
 
 export function buildTrack(rng, laneCount) {
   const lanes = [];
   for (let l = 0; l < laneCount; l++) {
     const potholes = [];
     for (let i = 0; i < POTHOLES_PER_LANE; i++) {
-      potholes.push(Math.floor(rng() * TRACK_LENGTH));
+      // never put a pothole in the first ~80 units (give cars a clean start)
+      potholes.push(80 + Math.floor(rng() * (TRACK_LENGTH - 80)));
     }
     lanes.push({ potholes: potholes.sort((a, b) => a - b) });
   }
@@ -25,20 +28,40 @@ export function buildTrack(rng, laneCount) {
 
 export function simulate(track, rng) {
   const positions = track.lanes.map(() => 0);
-  const history = [];
+  const speeds    = track.lanes.map(() => 0);
+  const hitFlags  = track.lanes.map(() => false);
+  const history   = [];
   let tick = 0;
-  while (positions.some((p) => p < track.length) && tick < 2000) {
+
+  while (positions.some((p) => p < track.length) && tick < MAX_TICKS) {
     track.lanes.forEach((lane, i) => {
-      if (positions[i] >= track.length) return;
+      if (positions[i] >= track.length) {
+        speeds[i] = 0;
+        hitFlags[i] = false;
+        return;
+      }
       const onPothole = lane.potholes.some(
-        (p) => Math.abs(p - positions[i]) < 4,
+        (p) => Math.abs(p - positions[i]) < POTHOLE_HIT_RADIUS,
       );
-      const speed = BASE_SPEED * (onPothole ? POTHOLE_PENALTY : 1) * (0.85 + rng() * 0.3);
+      const jitter = 0.85 + rng() * 0.3;
+      const speed = BASE_SPEED * (onPothole ? POTHOLE_PENALTY : 1) * jitter;
       positions[i] += speed;
+      speeds[i] = speed;
+      hitFlags[i] = onPothole;
     });
-    history.push([...positions]);
+    history.push({
+      positions: [...positions],
+      speeds:    [...speeds],
+      hits:      [...hitFlags],
+    });
     tick++;
   }
-  const winner = positions.indexOf(Math.max(...positions));
-  return { history, winner };
+
+  // Whoever crossed the finish line first wins. If both crossed in the same
+  // tick (very rare), the higher position wins.
+  let winnerIdx = 0;
+  for (let i = 1; i < positions.length; i++) {
+    if (positions[i] > positions[winnerIdx]) winnerIdx = i;
+  }
+  return { history, winner: winnerIdx };
 }

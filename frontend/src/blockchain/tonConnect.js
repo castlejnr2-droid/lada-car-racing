@@ -1,7 +1,8 @@
 /**
- * Thin wrapper around TonConnect. Anything that needs to send a transaction
- * goes through here so the rest of /blockchain has a single source of truth
- * for the connector.
+ * Thin wrapper around TonConnect.
+ *
+ * Other modules in /blockchain build typed tx payloads; this hook actually
+ * sends them.
  */
 import { useTonConnectUI, useTonAddress } from '@tonconnect/ui-react';
 
@@ -9,12 +10,10 @@ export function useTonSender() {
   const [tonConnectUI] = useTonConnectUI();
   const address = useTonAddress();
 
-  async function send(messages) {
-    return tonConnectUI.sendTransaction({
-      validUntil: Math.floor(Date.now() / 1000) + 360,
-      messages,
-    });
+  /** Send a TonConnect tx (built by buildCommit/buildReveal/buildDeposit). */
+  async function send(tx) {
+    return tonConnectUI.sendTransaction(tx);
   }
 
-  return { address, send };
+  return { address, send, isConnected: Boolean(address) };
 }
