@@ -1,21 +1,29 @@
 import { Config } from '@ton/blueprint';
 
 /**
- * Blueprint config. Sets the default network to testnet so the CLI doesn't
- * prompt every run; pass `--mainnet` to override.
+ * Blueprint config — pointing at the TON Hub v4 testnet endpoint.
  *
- * Using the string form `'testnet'` (rather than a CustomNetwork object) is
- * deliberate — Blueprint's CLI handles known-network strings everywhere,
- * whereas a CustomNetwork object can interact badly with some prompts.
+ * Why v4 + tonhub:
+ *   - toncenter testnet has been flaky (intermittent 500s on jsonRPC)
+ *   - the v4 endpoint is faster and doesn't need an API key
  *
- * To target a specific endpoint (e.g. toncenter with your own key) pass it
- * on the CLI:
+ * Endpoint chain (use whichever stays up):
+ *   primary  : https://testnet-v4.tonhubapi.com           ← configured below
+ *   fallback : https://testnet.tonapi.io/api/v2/jsonRPC   ← see CLI snippet
+ *
+ * Switch to the fallback via the CLI (no config edit needed):
  *   npx blueprint run deployLadaEscrow --custom \
- *     --custom-key=YOUR_KEY \
  *     --custom-version=v2 \
  *     --custom-type=testnet \
- *     https://testnet.toncenter.com/api/v2/jsonRPC
+ *     https://testnet.tonapi.io/api/v2/jsonRPC
+ *
+ * Or to mainnet later:
+ *   npx blueprint run deployLadaEscrow --mainnet
  */
 export const config: Config = {
-  network: 'testnet',
+  network: {
+    endpoint: 'https://testnet-v4.tonhubapi.com',
+    version: 'v4',
+    type: 'testnet',
+  },
 };

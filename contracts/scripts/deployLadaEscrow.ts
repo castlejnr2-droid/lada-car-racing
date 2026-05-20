@@ -3,22 +3,26 @@ import { NetworkProvider } from '@ton/blueprint';
 import { LadaEscrow } from '../build/LadaEscrow/LadaEscrow_LadaEscrow';
 
 /**
- * Deploys LadaEscrow to whichever network Blueprint is pointed at
- * (defaults to testnet per blueprint.config.ts).
+ * Blueprint deploy script for LadaEscrow.
  *
- * Required env (with sensible fallbacks):
- *   HOUSE_WALLET         — TON address that collects the 5% house fee.
- *                          Defaults to the signing wallet.
- *   LADA_JETTON_WALLET   — this contract's jetton wallet for the Lada jetton.
- *                          For a first-pass deploy, leave unset — the script
- *                          uses the signing wallet as a placeholder. Compute
- *                          the real value by calling get_wallet_address on
- *                          the Lada jetton master with the contract's
- *                          eventual address, then redeploy.
+ * Endpoints (configured in blueprint.config.ts):
+ *   primary  https://testnet-v4.tonhubapi.com          (v4 HTTP API)
+ *   fallback https://testnet.tonapi.io/api/v2/jsonRPC  (pass via --custom)
  *
  * Run with:
- *   npx blueprint run deployLadaEscrow              # testnet (default)
- *   npx blueprint run deployLadaEscrow --mainnet
+ *   npx blueprint run deployLadaEscrow                 # default (v4 tonhub)
+ *   npx blueprint run deployLadaEscrow --custom \
+ *     --custom-version=v2 --custom-type=testnet \
+ *     https://testnet.tonapi.io/api/v2/jsonRPC          # fallback
+ *   npx blueprint run deployLadaEscrow --mainnet        # mainnet
+ *
+ * Env (optional):
+ *   HOUSE_WALLET         — TON address that collects the 5% fee.
+ *                          Defaults to the signing wallet.
+ *   LADA_JETTON_WALLET   — this contract's jetton wallet for Lada.
+ *                          Leave unset on first deploy (uses owner as
+ *                          placeholder); redeploy with the real value
+ *                          once the jetton master returns it.
  */
 export async function run(provider: NetworkProvider) {
   const owner = provider.sender().address!;
@@ -65,7 +69,8 @@ export async function run(provider: NetworkProvider) {
   console.log('  Address:  ', escrow.address.toString());
   console.log('  Explorer: ', explorer);
   console.log('');
-  console.log('  → Copy this address into your frontend/backend env as:');
+  console.log('  → Copy this address into your env files as:');
   console.log('       ESCROW_CONTRACT_ADDRESS=' + escrow.address.toString());
+  console.log('       VITE_ESCROW_CONTRACT_ADDRESS=' + escrow.address.toString());
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 }
