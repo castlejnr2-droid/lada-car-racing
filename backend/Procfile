@@ -1,2 +1,0 @@
-web: npm start
-release: node src/db/migrate.js
