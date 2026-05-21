@@ -5,14 +5,11 @@ import { fetchLobbies, createLobby, joinLobby } from '../../api/lobbies.js';
 import { useMainButton, haptic } from '../../lib/telegram.js';
 import { formatLada, ladaToNano, shortAddress } from '../../lib/format.js';
 
-const PLAYER_OPTIONS = [2, 3, 4, 5];
-
 export default function PlayTab() {
   const [lobbies, setLobbies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [stake, setStake] = useState('10');
-  const [minPlayers, setMinPlayers] = useState(2);
   const address = useTonAddress();
   const navigate = useNavigate();
 
@@ -25,6 +22,7 @@ export default function PlayTab() {
 
   useEffect(() => { refresh(); }, []);
 
+  // MainButton: "Create lobby" by default, hides while opening the modal
   useEffect(() => {
     if (creating) return () => {};
     if (!address) return () => {};
@@ -40,11 +38,11 @@ export default function PlayTab() {
       const lobby = await createLobby({
         stake: ladaToNano(stake).toString(),
         creator: address,
-        minPlayers,
-        maxPlayers: 5,
       });
       setCreating(false);
       haptic.success();
+      // Stay on Play tab — the lobby now appears in the list. We could
+      // also navigate straight into /race once both players are in.
       refresh();
       return lobby;
     } catch (e) {
@@ -56,15 +54,14 @@ export default function PlayTab() {
   async function handleJoin(lobby) {
     try {
       haptic.medium();
-      const result = await joinLobby(lobby.id, address);
+      await joinLobby(lobby.id, address);
       haptic.success();
-      // If the join triggered a race auto-start, navigate straight in.
-      // Otherwise just refresh and stay on the lobby list.
-      if (result?.raceStarted) {
-        navigate(`/race/${lobby.id}`);
-      } else {
-        refresh();
-      }
+      // The backend matches the lobby; refresh to get the on_chain_race_id
+      // if it was assigned, then navigate.
+      const updated = await fetchLobbies();
+      const matched = updated.find((l) => l.id === lobby.id);
+      // Navigate to the race screen — the screen waits for race state.
+      navigate(`/race/${lobby.id}`);
     } catch (e) {
       haptic.error();
       alert(e.message);
@@ -94,28 +91,6 @@ export default function PlayTab() {
               autoFocus
             />
           </div>
-
-          <div className="field">
-            <label>Start race when this many players join</label>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {PLAYER_OPTIONS.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  className={`btn btn--small ${minPlayers === n ? '' : 'btn--ghost'}`}
-                  style={{ flex: 1 }}
-                  onClick={() => { haptic.select(); setMinPlayers(n); }}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-            <div style={{ color: 'var(--fg-muted)', fontSize: 12, marginTop: 4 }}>
-              Max 5 players per lobby. The race auto-starts once the chosen
-              minimum is reached.
-            </div>
-          </div>
-
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn--ghost" onClick={() => setCreating(false)}>Cancel</button>
             <button className="btn" onClick={handleCreate}>Create</button>
@@ -138,14 +113,13 @@ export default function PlayTab() {
             <div>
               <div className="card__title">{formatLada(l.stake)} LADA</div>
               <div className="card__meta">
-                host {shortAddress(l.creator)} · {l.players}/{l.minPlayers ?? 2}
-                {l.minPlayers !== l.maxPlayers && ` (up to ${l.maxPlayers})`}
+                host {shortAddress(l.creator)} · {l.players}/{l.maxPlayers}
               </div>
             </div>
             <button
               className="btn btn--small"
               onClick={() => handleJoin(l)}
-              disabled={l.creator === address || l.players >= l.maxPlayers}
+              disabled={l.creator === address}
             >
               {l.creator === address ? 'Yours' : 'Join'}
             </button>

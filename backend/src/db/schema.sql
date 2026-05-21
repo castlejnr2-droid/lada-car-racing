@@ -27,8 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_players_telegram_id ON players(telegram_id);
 CREATE TABLE IF NOT EXISTS lobbies (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   stake            NUMERIC(30, 0) NOT NULL,             -- nano-LADA
-  max_players      INT NOT NULL DEFAULT 5,
-  min_players      INT NOT NULL DEFAULT 2,
+  max_players      INT NOT NULL DEFAULT 2,
   status           TEXT NOT NULL DEFAULT 'open',
   --                open      waiting for players
   --                matched   full, race created on-chain
@@ -133,21 +132,6 @@ CREATE TABLE IF NOT EXISTS house_fees (
 
 CREATE INDEX IF NOT EXISTS idx_house_fees_withdrawn  ON house_fees(withdrawn);
 CREATE INDEX IF NOT EXISTS idx_house_fees_collected  ON house_fees(collected_at DESC);
-
--- PATCHED-MIN-PLAYERS
-
--- ─────────────────────────────────────────────────────────────────────
---  Idempotent migrations for older databases
--- ─────────────────────────────────────────────────────────────────────
-ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS min_players INT NOT NULL DEFAULT 2;
-ALTER TABLE lobbies ALTER COLUMN max_players SET DEFAULT 5;
-
--- Allow 'active' as a race state (race results predetermined server-side but
--- frontend hasn't replayed yet). Rebuild the constraint idempotently.
-ALTER TABLE races DROP CONSTRAINT IF EXISTS races_state_chk;
-ALTER TABLE races ADD CONSTRAINT races_state_chk CHECK (state IN (
-  'awaiting_deposits','awaiting_commits','awaiting_reveals','active','settled','refunded'
-));
 
 -- ─────────────────────────────────────────────────────────────────────
 --  Touch trigger for players.updated_at
