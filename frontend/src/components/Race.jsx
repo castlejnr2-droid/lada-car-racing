@@ -36,7 +36,7 @@ export default function Race() {
           const r = await fetchRace(raceId);
           if (cancelled) return;
           setRace(r);
-          if (r.state === 'settled' || r.state === 'refunded') return;
+          if (r.state === 'settled' || r.state === 'active' || r.state === 'refunded') return;
         } catch (e) {
           console.warn('[race] poll error', e);
         }
@@ -49,7 +49,7 @@ export default function Race() {
 
   // Once race is settled and we have a combined_seed, run the replay
   useEffect(() => {
-    if (race?.state !== 'settled' || !race.combined_seed || !canvasRef.current) return;
+    if (!(race?.state === 'settled' || race?.state === 'active') || !race.combined_seed || !canvasRef.current) return;
     replayStopRef.current = runReplay(canvasRef.current, race.combined_seed, {
       onComplete: () => {
         setReplayDone(true);
