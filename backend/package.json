@@ -4,7 +4,7 @@
   "private": true,
   "description": "Lada Car Racing — Node.js API (lobbies, leaderboard, stats, house fee tracking)",
   "type": "module",
-  "main": "src/index.js",
+  "main": "index.js",
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
