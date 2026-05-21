@@ -5,67 +5,62 @@ import { LadaEscrow } from '../build/LadaEscrow/LadaEscrow_LadaEscrow';
 /**
  * Blueprint deploy script for LadaEscrow.
  *
- * ── Network ──────────────────────────────────────────────────────────
- * Endpoint is chosen by blueprint.config.ts based on CLI flag:
- *   npx blueprint run deployLadaEscrow              → testnet (tonhub v4)
- *   npx blueprint run deployLadaEscrow --mainnet    → mainnet (toncenter v2)
- *   npx blueprint run deployLadaEscrow --custom \
- *     --custom-version=v2 --custom-type=testnet \
- *     https://testnet.tonapi.io/api/v2/jsonRPC      → custom (testnet fallback)
+ * Network (chosen via blueprint.config.ts based on --mainnet flag):
+ *   testnet (default) → tonhub v4 endpoint
+ *   --mainnet          → toncenter v2 endpoint
  *
- * For mainnet via toncenter, set TONCENTER_API_KEY to raise the rate limit.
+ * Wallet (mnemonic deployer reads TWO env vars; both case-sensitive):
+ *   WALLET_MNEMONIC   24-word seed phrase
+ *   WALLET_VERSION    one of: v1r1 v1r2 v1r3 v2r1 v2r2 v3r1 v3r2 v4 v5r1
+ *                     (NOTE: lowercase — Blueprint rejects "v5R1")
  *
- * ── Wallet (signing) ─────────────────────────────────────────────────
+ * Windows cmd (mainnet):
+ *   set WALLET_MNEMONIC=word word ... word
+ *   set WALLET_VERSION=v5r1
+ *   set TONCENTER_API_KEY=your-key
+ *   npx blueprint run deployLadaEscrow --mnemonic --mainnet
  *
- *  TonConnect (default — opens your wallet to sign):
- *    npx blueprint run deployLadaEscrow --tonconnect
- *
- *  Mnemonic (unattended) — Blueprint reads these two env vars:
- *    WALLET_MNEMONIC="word1 word2 … word24"
- *    WALLET_VERSION=v4                        (also accepts v3r2, v5r1, etc.)
- *
- *  Examples:
- *    Linux/macOS:
- *      WALLET_MNEMONIC="word word ... word" WALLET_VERSION=v4 \
- *        npx blueprint run deployLadaEscrow --mnemonic
- *    Windows PowerShell:
- *      $env:WALLET_MNEMONIC = "word word ... word"
- *      $env:WALLET_VERSION  = "v4"
- *      npx blueprint run deployLadaEscrow --mnemonic
- *
- *  IMPORTANT: both vars must be set. Blueprint throws
- *    "Mnemonic deployer was chosen, but env variables WALLET_MNEMONIC and
- *     WALLET_VERSION are not set"
- *  if either is missing or empty.
- *
- * ── Optional deploy params ───────────────────────────────────────────
- *   HOUSE_WALLET         — TON address that collects the 5% fee.
- *                          Defaults to the signing wallet.
- *   LADA_JETTON_WALLET   — this contract's jetton wallet for Lada.
- *                          Leave unset on first deploy (uses owner as
- *                          placeholder); redeploy with the real value
- *                          once the jetton master returns it.
+ * Init parameters (env overrides bracketed):
+ *   owner             — the signing wallet (always)
+ *   houseWallet       — [HOUSE_WALLET]        defaults to owner
+ *   ladaJettonWallet  — [LADA_JETTON_WALLET]  defaults to LADA_JETTON_WALLET_DEFAULT below
  */
+
+// The Lada jetton wallet for the escrow on mainnet.
+// (Override with LADA_JETTON_WALLET env if redeploying for a different jetton.)
+const LADA_JETTON_WALLET_DEFAULT = 'EQAfi7cbO6NvAfYXVvftXli1LijUHwinraa8OLO5Nh2MPwkP';
+
+function parseAddrOrDie(value: string, label: string): Address {
+  try {
+    return Address.parse(value);
+  } catch (e: any) {
+    console.error(`✗ ${label} address could not be parsed: "${value}"`);
+    console.error(`  Reason: ${e?.message || e}`);
+    console.error(`  TON friendly addresses are 48 chars and end in a CRC16 checksum.`);
+    console.error(`  Double-check the address you copied — one wrong character invalidates`);
+    console.error(`  the checksum.`);
+    process.exit(1);
+  }
+}
+
 export async function run(provider: NetworkProvider) {
   const owner = provider.sender().address!;
-  const houseWallet = process.env.HOUSE_WALLET
-    ? Address.parse(process.env.HOUSE_WALLET)
-    : owner;
-  const ladaJettonWallet = process.env.LADA_JETTON_WALLET
-    ? Address.parse(process.env.LADA_JETTON_WALLET)
-    : owner;
-
-  const isPlaceholder = !process.env.LADA_JETTON_WALLET;
   const network = provider.network();
+
+  const houseWallet = process.env.HOUSE_WALLET
+    ? parseAddrOrDie(process.env.HOUSE_WALLET, 'HOUSE_WALLET')
+    : owner;
+  const ladaJettonWalletStr = process.env.LADA_JETTON_WALLET || LADA_JETTON_WALLET_DEFAULT;
+  const ladaJettonWallet = parseAddrOrDie(ladaJettonWalletStr, 'ladaJettonWallet');
 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  LadaEscrow deployment');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('  Network:        ', network);
+  console.log('  Network:        ', network, network === 'mainnet' ? '⚠ REAL TON' : '');
   console.log('  Owner:          ', owner.toString());
   console.log('  House wallet:   ', houseWallet.toString());
   console.log('  Jetton wallet:  ', ladaJettonWallet.toString(),
-              isPlaceholder ? '(placeholder — redeploy with real value)' : '');
+              process.env.LADA_JETTON_WALLET ? '(env override)' : '(default)');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
   const escrow = provider.open(
