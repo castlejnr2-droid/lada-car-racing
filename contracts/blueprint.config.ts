@@ -1,29 +1,43 @@
-import { Config } from '@ton/blueprint';
+import { Config, CustomNetwork } from '@ton/blueprint';
 
 /**
- * Blueprint config — pointing at the TON Hub v4 testnet endpoint.
+ * Network is picked dynamically so the same config supports both networks:
  *
- * Why v4 + tonhub:
- *   - toncenter testnet has been flaky (intermittent 500s on jsonRPC)
- *   - the v4 endpoint is faster and doesn't need an API key
+ *   npx blueprint run deployLadaEscrow              → testnet (tonhub v4)
+ *   npx blueprint run deployLadaEscrow --mainnet    → mainnet (toncenter v2)
+ *   npx blueprint run deployLadaEscrow --custom <url> --custom-version=v2 \
+ *     --custom-type=testnet                          → user-supplied endpoint
  *
- * Endpoint chain (use whichever stays up):
- *   primary  : https://testnet-v4.tonhubapi.com           ← configured below
- *   fallback : https://testnet.tonapi.io/api/v2/jsonRPC   ← see CLI snippet
+ * Why argv-aware: Blueprint's Config.network is a static value, so it can't
+ * react to CLI flags on its own. Reading process.argv here lets a single
+ * config produce the right endpoint per-invocation.
  *
- * Switch to the fallback via the CLI (no config edit needed):
- *   npx blueprint run deployLadaEscrow --custom \
- *     --custom-version=v2 \
- *     --custom-type=testnet \
- *     https://testnet.tonapi.io/api/v2/jsonRPC
+ * Endpoints picked:
+ *   mainnet : https://toncenter.com/api/v2/jsonRPC          (v2 jsonRPC)
+ *   testnet : https://testnet-v4.tonhubapi.com              (v4 HTTP API)
  *
- * Or to mainnet later:
- *   npx blueprint run deployLadaEscrow --mainnet
+ * For mainnet, set TONCENTER_API_KEY to raise the rate limit (toncenter
+ * heavily throttles unauthenticated traffic).
  */
-export const config: Config = {
-  network: {
+function pickNetwork(): CustomNetwork {
+  const argv = process.argv;
+
+  if (argv.includes('--mainnet')) {
+    return {
+      endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+      version: 'v2',
+      type: 'mainnet',
+      key: process.env.TONCENTER_API_KEY,
+    };
+  }
+  // Default: testnet via tonhub v4 (more reliable than toncenter testnet)
+  return {
     endpoint: 'https://testnet-v4.tonhubapi.com',
     version: 'v4',
     type: 'testnet',
-  },
+  };
+}
+
+export const config: Config = {
+  network: pickNetwork(),
 };

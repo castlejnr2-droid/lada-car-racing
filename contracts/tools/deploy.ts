@@ -1,42 +1,65 @@
 /**
  * Standalone deploy — bypasses Blueprint's CLI entirely.
  *
- * Endpoint chain (tries in order, falls through on connection failure):
- *   1. https://testnet-v4.tonhubapi.com           (v4 HTTP API, no key)
- *   2. https://testnet.tonapi.io/api/v2/jsonRPC   (v2 jsonRPC fallback)
+ * Network selection (CLI flag OR env var):
+ *   default               testnet via tonhub v4
+ *   --mainnet             mainnet via toncenter v2
+ *   TON_NETWORK=mainnet   same as --mainnet
+ *   TON_ENDPOINT=<url>    override entirely (also set TON_ENDPOINT_VERSION=v4|v2)
  *
- * Override with TON_ENDPOINT (and optional TON_ENDPOINT_VERSION=v4|v2).
+ * Endpoint chain (tried in order, falls through on connection failure):
+ *   testnet:
+ *     1. https://testnet-v4.tonhubapi.com          (v4 HTTP API, no key)
+ *     2. https://testnet.tonapi.io/api/v2/jsonRPC  (v2 jsonRPC fallback)
+ *   mainnet:
+ *     1. https://toncenter.com/api/v2/jsonRPC      (v2, set TONCENTER_API_KEY!)
+ *     2. https://mainnet-v4.tonhubapi.com          (v4 fallback)
  *
- * Run:
- *   npm run build                                    # compile lada_escrow.tact
- *   WALLET_MNEMONIC="24-word seed phrase" \
- *   HOUSE_WALLET=0Q… \                               # optional
- *   LADA_JETTON_WALLET=0Q… \                         # optional
- *   npm run deploy:standalone
+ * Wallet (signing):
+ *   WALLET_MNEMONIC — 24-word seed phrase (required)
+ *
+ * Run examples:
+ *   Linux/macOS:
+ *     WALLET_MNEMONIC="word word ... word" npm run deploy:standalone
+ *     WALLET_MNEMONIC="..." npm run deploy:standalone -- --mainnet
+ *   Windows PowerShell:
+ *     $env:WALLET_MNEMONIC = "word word ... word"
+ *     npm run deploy:standalone
  */
 import { Address, toNano, internal, SendMode, beginCell } from '@ton/core';
 import { TonClient, TonClient4, WalletContractV4 } from '@ton/ton';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { LadaEscrow } from '../build/LadaEscrow/LadaEscrow_LadaEscrow';
 
+type Endpoint = { kind: 'v4' | 'v2'; url: string };
 type V4Client = { kind: 'v4'; client: TonClient4; endpoint: string };
 type V2Client = { kind: 'v2'; client: TonClient;  endpoint: string };
 type AnyClient = V4Client | V2Client;
 
-const ENDPOINTS: Array<{ kind: 'v4' | 'v2'; url: string }> = (() => {
-  // Custom override via env
+const IS_MAINNET =
+  process.argv.includes('--mainnet') ||
+  (process.env.TON_NETWORK || '').toLowerCase() === 'mainnet';
+
+function endpointsFor(network: 'mainnet' | 'testnet'): Endpoint[] {
+  // Hard override via env
   if (process.env.TON_ENDPOINT) {
     const kind = (process.env.TON_ENDPOINT_VERSION || 'v4').toLowerCase() === 'v2' ? 'v2' : 'v4';
     return [{ kind, url: process.env.TON_ENDPOINT }];
   }
-  return [
-    { kind: 'v4', url: 'https://testnet-v4.tonhubapi.com' },
-    { kind: 'v2', url: 'https://testnet.tonapi.io/api/v2/jsonRPC' },
-  ];
-})();
+  return network === 'mainnet'
+    ? [
+        { kind: 'v2', url: 'https://toncenter.com/api/v2/jsonRPC' },
+        { kind: 'v4', url: 'https://mainnet-v4.tonhubapi.com' },
+      ]
+    : [
+        { kind: 'v4', url: 'https://testnet-v4.tonhubapi.com' },
+        { kind: 'v2', url: 'https://testnet.tonapi.io/api/v2/jsonRPC' },
+      ];
+}
 
-async function connect(): Promise<AnyClient> {
-  for (const ep of ENDPOINTS) {
+async function connect(network: 'mainnet' | 'testnet'): Promise<AnyClient> {
+  const apiKey = process.env.TONCENTER_API_KEY;
+  for (const ep of endpointsFor(network)) {
     try {
       if (ep.kind === 'v4') {
         const c = new TonClient4({ endpoint: ep.url });
@@ -44,9 +67,9 @@ async function connect(): Promise<AnyClient> {
         console.log(`[deploy] connected via v4 → ${ep.url}`);
         return { kind: 'v4', client: c, endpoint: ep.url };
       } else {
-        const c = new TonClient({ endpoint: ep.url });
+        const c = new TonClient({ endpoint: ep.url, apiKey });
         await c.getMasterchainInfo();
-        console.log(`[deploy] connected via v2 → ${ep.url}`);
+        console.log(`[deploy] connected via v2 → ${ep.url}${apiKey ? ' (with API key)' : ''}`);
         return { kind: 'v2', client: c, endpoint: ep.url };
       }
     } catch (e: any) {
@@ -80,18 +103,23 @@ function fail(msg: string): never {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
+  const network: 'mainnet' | 'testnet' = IS_MAINNET ? 'mainnet' : 'testnet';
+
   const mnemonic = (process.env.WALLET_MNEMONIC || '').trim();
   if (!mnemonic) {
     fail(
-      'WALLET_MNEMONIC env var is required.\n' +
-      '  Run:\n' +
-      '    WALLET_MNEMONIC="word word ... word" npm run deploy:standalone',
+      'WALLET_MNEMONIC env var is required (24-word seed phrase).\n' +
+      '  Linux/macOS:\n' +
+      '    WALLET_MNEMONIC="word word ... word" npm run deploy:standalone\n' +
+      '  Windows PowerShell:\n' +
+      '    $env:WALLET_MNEMONIC = "word word ... word"\n' +
+      '    npm run deploy:standalone',
     );
   }
   const words = mnemonic.split(/\s+/).filter(Boolean);
   if (words.length !== 24) fail(`WALLET_MNEMONIC must be 24 words (got ${words.length})`);
 
-  const cnx = await connect();
+  const cnx = await connect(network);
 
   // Wallet
   const keys = await mnemonicToPrivateKey(words);
@@ -109,6 +137,7 @@ async function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  LadaEscrow standalone deploy');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('  Network:         ', network, network === 'mainnet' ? '⚠ REAL TON' : '');
   console.log('  Endpoint:        ', cnx.endpoint, `(${cnx.kind})`);
   console.log('  Deployer (owner):', owner.toString());
   console.log('  House wallet:    ', houseWallet.toString());
@@ -122,8 +151,10 @@ async function main() {
   console.log('  Deployer balance:', Number(balance) / 1e9, 'TON');
   if (balance < toNano('0.2')) {
     fail(
-      'Deployer wallet has insufficient TON for gas + storage.\n' +
-      '  Testnet faucet: https://t.me/testgiver_ton_bot',
+      `Deployer wallet has insufficient TON for gas + storage.\n` +
+      (network === 'testnet'
+        ? '  Testnet faucet: https://t.me/testgiver_ton_bot'
+        : '  Fund this wallet with mainnet TON before retrying.'),
     );
   }
 
@@ -161,7 +192,9 @@ async function main() {
   }
   if (!activated) fail('Timed out waiting for contract to activate. Check tx on tonviewer.');
 
-  const explorer = `https://testnet.tonviewer.com/${escrow.address.toString()}`;
+  const explorer = network === 'mainnet'
+    ? `https://tonviewer.com/${escrow.address.toString()}`
+    : `https://testnet.tonviewer.com/${escrow.address.toString()}`;
   console.log('');
   console.log('  ✓ Deployed!');
   console.log('  Address:  ', escrow.address.toString());

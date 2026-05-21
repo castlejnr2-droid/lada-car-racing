@@ -5,18 +5,40 @@ import { LadaEscrow } from '../build/LadaEscrow/LadaEscrow_LadaEscrow';
 /**
  * Blueprint deploy script for LadaEscrow.
  *
- * Endpoints (configured in blueprint.config.ts):
- *   primary  https://testnet-v4.tonhubapi.com          (v4 HTTP API)
- *   fallback https://testnet.tonapi.io/api/v2/jsonRPC  (pass via --custom)
- *
- * Run with:
- *   npx blueprint run deployLadaEscrow                 # default (v4 tonhub)
+ * ── Network ──────────────────────────────────────────────────────────
+ * Endpoint is chosen by blueprint.config.ts based on CLI flag:
+ *   npx blueprint run deployLadaEscrow              → testnet (tonhub v4)
+ *   npx blueprint run deployLadaEscrow --mainnet    → mainnet (toncenter v2)
  *   npx blueprint run deployLadaEscrow --custom \
  *     --custom-version=v2 --custom-type=testnet \
- *     https://testnet.tonapi.io/api/v2/jsonRPC          # fallback
- *   npx blueprint run deployLadaEscrow --mainnet        # mainnet
+ *     https://testnet.tonapi.io/api/v2/jsonRPC      → custom (testnet fallback)
  *
- * Env (optional):
+ * For mainnet via toncenter, set TONCENTER_API_KEY to raise the rate limit.
+ *
+ * ── Wallet (signing) ─────────────────────────────────────────────────
+ *
+ *  TonConnect (default — opens your wallet to sign):
+ *    npx blueprint run deployLadaEscrow --tonconnect
+ *
+ *  Mnemonic (unattended) — Blueprint reads these two env vars:
+ *    WALLET_MNEMONIC="word1 word2 … word24"
+ *    WALLET_VERSION=v4                        (also accepts v3r2, v5r1, etc.)
+ *
+ *  Examples:
+ *    Linux/macOS:
+ *      WALLET_MNEMONIC="word word ... word" WALLET_VERSION=v4 \
+ *        npx blueprint run deployLadaEscrow --mnemonic
+ *    Windows PowerShell:
+ *      $env:WALLET_MNEMONIC = "word word ... word"
+ *      $env:WALLET_VERSION  = "v4"
+ *      npx blueprint run deployLadaEscrow --mnemonic
+ *
+ *  IMPORTANT: both vars must be set. Blueprint throws
+ *    "Mnemonic deployer was chosen, but env variables WALLET_MNEMONIC and
+ *     WALLET_VERSION are not set"
+ *  if either is missing or empty.
+ *
+ * ── Optional deploy params ───────────────────────────────────────────
  *   HOUSE_WALLET         — TON address that collects the 5% fee.
  *                          Defaults to the signing wallet.
  *   LADA_JETTON_WALLET   — this contract's jetton wallet for Lada.
@@ -34,11 +56,12 @@ export async function run(provider: NetworkProvider) {
     : owner;
 
   const isPlaceholder = !process.env.LADA_JETTON_WALLET;
+  const network = provider.network();
 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  LadaEscrow deployment');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('  Network:        ', provider.network());
+  console.log('  Network:        ', network);
   console.log('  Owner:          ', owner.toString());
   console.log('  House wallet:   ', houseWallet.toString());
   console.log('  Jetton wallet:  ', ladaJettonWallet.toString(),
@@ -60,7 +83,7 @@ export async function run(provider: NetworkProvider) {
 
   await provider.waitForDeploy(escrow.address);
 
-  const explorer = provider.network() === 'mainnet'
+  const explorer = network === 'mainnet'
     ? `https://tonviewer.com/${escrow.address.toString()}`
     : `https://testnet.tonviewer.com/${escrow.address.toString()}`;
 
