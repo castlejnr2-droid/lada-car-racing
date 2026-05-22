@@ -37,7 +37,7 @@ router.get('/', async (_req, res, next) => {
 //     2 <= minPlayers <= maxPlayers <= 5
 router.post('/', async (req, res, next) => {
   try {
-    const { stake, creator } = req.body;
+    const { stake, creator, username } = req.body;
     if (!stake || !creator) {
       return res.status(400).json({ error: 'stake and creator required' });
     }
@@ -45,10 +45,11 @@ router.post('/', async (req, res, next) => {
     const minPlayers = clampInt(req.body.minPlayers, 2, 5, 2);
     const maxPlayers = clampInt(req.body.maxPlayers, minPlayers, 5, 5);
 
-    // Make sure the creator exists as a player
+    // Upsert player — update username whenever one is provided
     await query(
-      `INSERT INTO players (address) VALUES ($1) ON CONFLICT DO NOTHING`,
-      [creator],
+      `INSERT INTO players (address, username) VALUES ($1, $2)
+       ON CONFLICT (address) DO UPDATE SET username = COALESCE(EXCLUDED.username, players.username)`,
+      [creator, username || null],
     );
 
     const { rows } = await query(
@@ -62,9 +63,9 @@ router.post('/', async (req, res, next) => {
 
     // Creator implicitly joins their own lobby
     await query(
-      `INSERT INTO lobby_players (lobby_id, address) VALUES ($1, $2)
+      `INSERT INTO lobby_players (lobby_id, address, username) VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING`,
-      [lobby.id, creator],
+      [lobby.id, creator, username || null],
     );
 
     res.status(201).json(lobby);
@@ -75,12 +76,14 @@ router.post('/', async (req, res, next) => {
 router.post('/:id/join', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { address } = req.body;
+    const { address, username } = req.body;
     if (!address) return res.status(400).json({ error: 'address required' });
 
+    // Upsert player — update username whenever one is provided
     await query(
-      `INSERT INTO players (address) VALUES ($1) ON CONFLICT DO NOTHING`,
-      [address],
+      `INSERT INTO players (address, username) VALUES ($1, $2)
+       ON CONFLICT (address) DO UPDATE SET username = COALESCE(EXCLUDED.username, players.username)`,
+      [address, username || null],
     );
 
     const lobby = await query(`SELECT * FROM lobbies WHERE id = $1`, [id]);
@@ -99,9 +102,9 @@ router.post('/:id/join', async (req, res, next) => {
     }
 
     await query(
-      `INSERT INTO lobby_players (lobby_id, address) VALUES ($1, $2)
+      `INSERT INTO lobby_players (lobby_id, address, username) VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING`,
-      [id, address],
+      [id, address, username || null],
     );
 
     // Recount after insert. If we're now at >= min_players (or full), auto-start.

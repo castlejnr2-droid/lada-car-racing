@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { TonConnectButton, useTonAddress } from '@tonconnect/ui-react';
 import { fetchLobbies, createLobby, joinLobby } from '../../api/lobbies.js';
 import { fetchRace } from '../../api/races.js';
-import { useMainButton, haptic } from '../../lib/telegram.js';
+import { useMainButton, haptic, tgUser } from '../../lib/telegram.js';
 import { formatLada, ladaToNano, shortAddress } from '../../lib/format.js';
 
 const PLAYER_OPTIONS = [2, 3, 4, 5];
@@ -17,6 +17,7 @@ export default function PlayTab() {
   const [myPendingLobbyId, setMyPendingLobbyId] = useState(null);
   const address = useTonAddress();
   const navigate = useNavigate();
+  const username = tgUser()?.username || tgUser()?.first_name || null;
 
   // Poll for race start when the creator is waiting for players to join
   useEffect(() => {
@@ -61,6 +62,7 @@ export default function PlayTab() {
       const lobby = await createLobby({
         stake: ladaToNano(stake).toString(),
         creator: address,
+        username,
         minPlayers,
         maxPlayers: 5,
       });
@@ -78,7 +80,7 @@ export default function PlayTab() {
   async function handleJoin(lobby) {
     try {
       haptic.medium();
-      const result = await joinLobby(lobby.id, address);
+      const result = await joinLobby(lobby.id, address, username);
       haptic.success();
       // If the join triggered a race auto-start, navigate straight in.
       // Otherwise just refresh and stay on the lobby list.

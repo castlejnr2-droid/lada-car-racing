@@ -43,6 +43,7 @@ async function boot() {
     await pool.query(`ALTER TABLE races ADD COLUMN IF NOT EXISTS combined_seed TEXT`);
     await pool.query(`ALTER TABLE races DROP CONSTRAINT IF EXISTS races_state_chk`);
     await pool.query(`ALTER TABLE races ADD CONSTRAINT races_state_chk CHECK (state IN ('waiting', 'active', 'settled', 'cancelled'))`);
+    await pool.query(`ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS username TEXT`);
     console.log('[boot] ✓ column patches applied');
   } catch (e) {
     console.error('[boot] column patch failed:', e?.message || e);

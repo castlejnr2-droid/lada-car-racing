@@ -40,8 +40,23 @@ router.get('/', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const race = await query(`SELECT * FROM races WHERE id = $1`, [id]);
+    const race = await query(
+      `SELECT r.*,
+              p1.username AS player1_username,
+              p2.username AS player2_username
+         FROM races r
+         LEFT JOIN players p1 ON p1.address = r.player1
+         LEFT JOIN players p2 ON p2.address = r.player2
+        WHERE r.id = $1`,
+      [id],
+    );
     if (race.rowCount === 0) return res.status(404).json({ error: 'unknown race' });
+
+    const row = race.rows[0];
+    // Derive winner_username for convenience
+    const winner_username = row.winner === row.player1
+      ? row.player1_username
+      : row.player2_username;
 
     // include the most recent tx events for this race
     const txs = await query(
@@ -53,7 +68,7 @@ router.get('/:id', async (req, res, next) => {
       [id],
     );
 
-    res.json({ ...race.rows[0], transactions: txs.rows });
+    res.json({ ...row, winner_username, transactions: txs.rows });
   } catch (e) { next(e); }
 });
 
