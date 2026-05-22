@@ -18,7 +18,7 @@ import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── tunables ────────────────────────────────────────────────────────────────
 const PHYS_PER_FRAME = 3;    // physics steps per render frame (~10 s race @ 60 fps)
-const SCROLL_SCALE   = 0.5;  // road-px per physics speed unit
+const SCROLL_SCALE   = 1.25; // road-px per physics speed unit (2.5x faster feel)
 const LEAD_X_FRAC    = 0.30; // leader fixed screen-x (fraction of W) during race
 const SPREAD_SCALE   = 1.1;  // how far back a fully-lapped car appears (fraction of W)
 const FINISH_X_FRAC  = 0.72; // where the finish line sits on screen
@@ -59,8 +59,8 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
   const TREE_H = H * 0.08;
   const ROAD_Y = SKY_H + TREE_H;
   const LANE_H = (H - ROAD_Y) / N;
-  const CAR_W  = Math.min(LANE_H * 2.4, 144);  // +20% wider / longer
-  const CAR_H  = CAR_W * 0.374;               // -15% shorter (low-slung Soviet sedan)
+  const CAR_W  = Math.min(LANE_H * 2.4, 144);  // wide / long
+  const CAR_H  = CAR_W * 0.45;               // flat brick: height = 45% of width
 
   const FINISH_X = W * FINISH_X_FRAC;
 
@@ -167,7 +167,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
 
     // ── draw ─────────────────────────────────────────────────────────────
     drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
-              sim, state, scenery, scrollX, physTick,
+              sim, state, scenery, scrollX, physTick, endFrame,
               carX, finishLineX, sim.winner, flashOn, celebFrame, confetti);
 
     // ── completion ────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ function buildScenery(rng, W) {
 
 // ─── frame ───────────────────────────────────────────────────────────────────
 function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
-                   sim, state, scenery, scrollX, physTick,
+                   sim, state, scenery, scrollX, physTick, endFrame,
                    carX, finishLineX, winnerIdx, flashOn, celebFrame, confetti) {
   ctx.clearRect(0, 0, W, H);
 
@@ -230,7 +230,12 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
 
   // draw cars back-to-front (higher index = behind)
   for (let i = N - 1; i >= 0; i--) {
-    const carY = ROAD_Y + (i + 0.54) * LANE_H;
+    const baseY  = ROAD_Y + (i + 0.54) * LANE_H;
+    // bumpy Russian road: vertical bounce scales with speed, stops during ending sequence
+    const bounce = endFrame < 0
+      ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.65
+      : 0;
+    const carY   = baseY + bounce;
     const stopped = celebFrame >= 0 && i !== winnerIdx;
     drawLada(ctx, carX[i], carY, CAR_W, CAR_H,
              CAR_COLORS[i % CAR_COLORS.length],
@@ -442,52 +447,57 @@ function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
 // Boxy Soviet sedan side profile. Front = RIGHT, rear = LEFT.
 function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const L  = cx - CW / 2;   // rear (left) edge
-  const WR = CH * 0.294;    // wheel radius (+25% larger)
+  const WR = CH * 0.280;    // wheel radius = 28% of car height
   const WY = cy;             // wheel centre Y
 
   // ── vertical levels ──────────────────────────────────────────────────────
-  const bodyBotY   = WY - WR * 0.22;        // bottom of side panels / sill
-  const deckY      = WY - CH * 0.47;        // hood and trunk deck height
-  const roofY      = WY - CH * 0.92;        // roof top (lower for flat, low-slung look)
-  const bumperBotY = bodyBotY + CH * 0.075; // bottom of bumpers
+  const bodyBotY   = WY - WR * 0.20;        // bottom of side panels / sill
+  const deckY      = WY - CH * 0.46;        // hood and trunk deck height
+  const roofY      = WY - CH * 0.90;        // roof — low and flat (brick on wheels)
+  const bumperBotY = bodyBotY + CH * 0.07;  // bottom of bumpers
 
   // ── horizontal landmarks ─────────────────────────────────────────────────
+  // Proportions: trunk 25% | cabin 35% | hood 40% (of total CW)
   const xR0  = L;                  // rear bumper outer face
-  const xR1  = L + CW * 0.036;    // rear bumper inner / body rear face
-  const xCP  = L + CW * 0.255;    // C-pillar base  (trunk/cabin junction at deck)
-  const xCPt = L + CW * 0.272;    // C-pillar top   (trunk/cabin junction at roof)
-  const xAP  = L + CW * 0.648;    // A-pillar base  — moved back for longer hood (~35% front section)
-  const xAPt = L + CW * 0.624;    // A-pillar top   (cabin/hood junction at roof)
-  const xF0  = L + CW * 0.964;    // front face / grille start
+  const xR1  = L + CW * 0.032;    // rear bumper inner / body rear face
+  const xCP  = L + CW * 0.252;    // C-pillar base  (trunk 25% from rear)
+  const xCPt = L + CW * 0.266;    // C-pillar top   (slight lean)
+  const xAP  = L + CW * 0.560;    // A-pillar base  (cabin 35% → hood 40% from here)
+  const xAPt = L + CW * 0.536;    // A-pillar top   (slight lean)
+  const xF0  = L + CW * 0.965;    // front face / grille start
   const xF1  = L + CW;            // front bumper tip
 
-  // wheel centres
-  const rWX = L + CW * 0.215;
-  const fWX = L + CW * 0.808;    // moved forward to sit under the longer hood
+  // wheel centres — close to ends (wide Soviet stance)
+  const rWX = L + CW * 0.192;
+  const fWX = L + CW * 0.842;
 
   ctx.save();
 
   // ── exhaust smoke (rear) ─────────────────────────────────────────────────
-  if (speed > 1.5) {
-    const n = hit ? 4 : Math.min(3, Math.ceil(speed / 2.5));
+  if (speed > 0.8) {
+    // more puffs and larger at high speed
+    const n        = hit ? 5 : Math.min(5, Math.ceil(speed / 1.6));
+    const sizeMult = hit ? 1.6 : (1 + speed * 0.08);
     for (let i = 0; i < n; i++) {
+      const r  = (4 + i * 4.5) * sizeMult;
+      const ox = -(i * 16 + 12);
+      const oy = -i * 3;
       ctx.fillStyle = hit
-        ? `rgba(80,65,45,${0.55 - i * 0.12})`
-        : `rgba(130,125,118,${0.30 - i * 0.07})`;
-      ctx.beginPath();
-      ctx.arc(xR0 - i * 14 - 10, bodyBotY - i * 3, (3 + i * 3) * (hit ? 1.4 : 1), 0, Math.PI * 2);
-      ctx.fill();
+        ? `rgba(80,65,45,${0.58 - i * 0.10})`
+        : `rgba(125,118,110,${0.35 - i * 0.06})`;
+      ctx.beginPath(); ctx.arc(xR0 + ox, bodyBotY + oy, r, 0, Math.PI * 2); ctx.fill();
     }
   }
 
-  // ── speed lines ──────────────────────────────────────────────────────────
-  if (speed > 4 && !hit) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1.5;
-    for (let i = 0; i < 4; i++) {
-      const len = 14 + (3 - i) * 6;
+  // ── speed lines (horizontal white streaks at high speed) ─────────────────
+  if (speed > 2.5 && !hit) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1.5;
+    for (let i = 0; i < 5; i++) {
+      const len = 18 + (4 - i) * 9 + speed * 2;
+      const ly  = bodyBotY - (i * CH * 0.095 + CH * 0.07);
       ctx.beginPath();
-      ctx.moveTo(xR0 - len - 6, bodyBotY - i * CH * 0.09 - CH * 0.06);
-      ctx.lineTo(xR0 - 6,       bodyBotY - i * CH * 0.09 - CH * 0.06);
+      ctx.moveTo(xR0 - len - 8, ly);
+      ctx.lineTo(xR0 - 8,       ly);
       ctx.stroke();
     }
   }
@@ -522,10 +532,10 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.beginPath(); ctx.moveTo(xR1, beltY); ctx.lineTo(xF0, beltY); ctx.stroke();
 
   // ── windows ──────────────────────────────────────────────────────────────
-  const winTop      = roofY + 5;
-  const winBot      = deckY + 4;
+  const winTop      = roofY + 3;    // tighter gap — taller, squarer windows
+  const winBot      = deckY + 3;
   const glassColor  = 'rgba(18,35,65,0.92)';
-  const windshieldW = CW * 0.062;   // horizontal depth of windshield glass
+  const windshieldW = CW * 0.070;   // horizontal depth of windshield glass
 
   // rear quarter window (small trapezoid near C-pillar)
   const rqEndX = xCP + (xAP - xCP) * 0.20;
