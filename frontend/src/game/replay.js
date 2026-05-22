@@ -439,126 +439,200 @@ function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
 }
 
 // ─── Lada 2107 ───────────────────────────────────────────────────────────────
+// Boxy Soviet sedan side profile. Front = RIGHT, rear = LEFT.
 function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
-  const L  = cx - CW / 2;
-  const WR = CH * 0.235;
-  const WY = cy;
+  const L  = cx - CW / 2;   // rear (left) edge
+  const WR = CH * 0.235;    // wheel radius
+  const WY = cy;             // wheel centre Y
+
+  // ── vertical levels ──────────────────────────────────────────────────────
+  const bodyBotY   = WY - WR * 0.22;        // bottom of side panels / sill
+  const deckY      = WY - CH * 0.47;        // hood and trunk deck height
+  const roofY      = WY - CH * 0.98;        // roof top
+  const bumperBotY = bodyBotY + CH * 0.075; // bottom of bumpers
+
+  // ── horizontal landmarks ─────────────────────────────────────────────────
+  const xR0  = L;                  // rear bumper outer face
+  const xR1  = L + CW * 0.036;    // rear bumper inner / body rear face
+  const xCP  = L + CW * 0.255;    // C-pillar base  (trunk/cabin junction at deck)
+  const xCPt = L + CW * 0.272;    // C-pillar top   (trunk/cabin junction at roof)
+  const xAP  = L + CW * 0.738;    // A-pillar base  (cabin/hood junction at deck)
+  const xAPt = L + CW * 0.712;    // A-pillar top   (cabin/hood junction at roof)
+  const xF0  = L + CW * 0.964;    // front face / grille start
+  const xF1  = L + CW;            // front bumper tip
+
+  // wheel centres
+  const rWX = L + CW * 0.215;
+  const fWX = L + CW * 0.792;
 
   ctx.save();
 
-  // exhaust
+  // ── exhaust smoke (rear) ─────────────────────────────────────────────────
   if (speed > 1.5) {
-    const numPuffs = hit ? 4 : Math.min(3, Math.ceil(speed / 2.5));
-    for (let i = 0; i < numPuffs; i++) {
-      const r  = (3 + i * 3) * (hit ? 1.4 : 1);
-      const ox = -(i * 14 + 8);
-      const oy = -CH * 0.18 - i * 3;
-      ctx.fillStyle = hit ? `rgba(80,65,45,${0.55 - i * 0.12})` : `rgba(130,125,118,${0.30 - i * 0.07})`;
-      ctx.beginPath(); ctx.arc(L + ox, cy + oy, r, 0, Math.PI * 2); ctx.fill();
+    const n = hit ? 4 : Math.min(3, Math.ceil(speed / 2.5));
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = hit
+        ? `rgba(80,65,45,${0.55 - i * 0.12})`
+        : `rgba(130,125,118,${0.30 - i * 0.07})`;
+      ctx.beginPath();
+      ctx.arc(xR0 - i * 14 - 10, bodyBotY - i * 3, (3 + i * 3) * (hit ? 1.4 : 1), 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
-  // speed lines
+  // ── speed lines ──────────────────────────────────────────────────────────
   if (speed > 4 && !hit) {
     ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1.5;
     for (let i = 0; i < 4; i++) {
-      const ly = cy - CH * (0.28 + i * 0.16);
-      const len = 14 + (3 - i) * 7;
-      ctx.beginPath(); ctx.moveTo(L - len - 4, ly); ctx.lineTo(L - 4, ly); ctx.stroke();
+      const len = 14 + (3 - i) * 6;
+      ctx.beginPath();
+      ctx.moveTo(xR0 - len - 6, bodyBotY - i * CH * 0.09 - CH * 0.06);
+      ctx.lineTo(xR0 - 6,       bodyBotY - i * CH * 0.09 - CH * 0.06);
+      ctx.stroke();
     }
   }
 
-  // lower body
+  // ── main body silhouette (one boxy path) ─────────────────────────────────
+  // Rear face and trunk top are vertical/flat; C-pillar nearly vertical;
+  // roof flat; A-pillar slight lean; hood flat; front face vertical.
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.moveTo(L + 6,         WY - WR * 0.3);
-  ctx.lineTo(L + 6,         cy - CH * 0.46);
-  ctx.lineTo(L + CW * 0.15, cy - CH * 0.52);
-  ctx.lineTo(L + CW * 0.74, cy - CH * 0.50);
-  ctx.lineTo(L + CW * 0.86, cy - CH * 0.42);
-  ctx.lineTo(L + CW - 6,    WY - WR * 0.3);
-  ctx.closePath(); ctx.fill();
+  ctx.moveTo(xR1,  bodyBotY);   // rear bottom
+  ctx.lineTo(xR1,  deckY);      // rear face — vertical
+  ctx.lineTo(xCP,  deckY);      // trunk deck — flat
+  ctx.lineTo(xCPt, roofY);      // C-pillar  — near-vertical
+  ctx.lineTo(xAPt, roofY);      // roof      — flat
+  ctx.lineTo(xAP,  deckY);      // A-pillar  — slight lean
+  ctx.lineTo(xF0,  deckY);      // hood top  — flat
+  ctx.lineTo(xF0,  bodyBotY);   // front face — vertical
+  ctx.closePath();
+  ctx.fill();
 
-  // cabin
-  ctx.fillStyle = color;
+  // sill / rocker panel strip (thin darker band at bottom of doors)
+  ctx.fillStyle = shade(color, -0.20);
+  ctx.fillRect(xR1, bodyBotY - CH * 0.055, xF0 - xR1, CH * 0.055);
+
+  // roof top shade
+  ctx.fillStyle = shade(color, -0.22);
+  ctx.fillRect(xCPt, roofY, xAPt - xCPt, 4);
+
+  // belt-line crease
+  const beltY = deckY + (bodyBotY - deckY) * 0.38;
+  ctx.strokeStyle = 'rgba(195,188,168,0.45)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(xR1, beltY); ctx.lineTo(xF0, beltY); ctx.stroke();
+
+  // ── windows ──────────────────────────────────────────────────────────────
+  const winTop      = roofY + 5;
+  const winBot      = deckY + 4;
+  const glassColor  = 'rgba(18,35,65,0.92)';
+  const windshieldW = CW * 0.058;   // horizontal depth of windshield glass
+
+  // rear quarter window (small trapezoid near C-pillar)
+  const rqEndX = xCP + (xAP - xCP) * 0.20;
+  ctx.fillStyle = glassColor;
   ctx.beginPath();
-  ctx.moveTo(L + CW * 0.15, cy - CH * 0.52);
-  ctx.lineTo(L + CW * 0.20, cy - CH);
-  ctx.lineTo(L + CW * 0.72, cy - CH);
-  ctx.lineTo(L + CW * 0.78, cy - CH * 0.52);
-  ctx.lineTo(L + CW * 0.74, cy - CH * 0.50);
-  ctx.lineTo(L + CW * 0.15, cy - CH * 0.52);
+  ctx.moveTo(xCP + 3,  winBot);
+  ctx.lineTo(xCPt + 3, winTop);
+  ctx.lineTo(rqEndX,   winTop);
+  ctx.lineTo(rqEndX,   winBot);
   ctx.closePath(); ctx.fill();
 
-  // roof shade
-  ctx.fillStyle = shade(color, -0.18);
+  // two main door windows separated by B-pillar
+  const wStart  = rqEndX + 3;
+  const wEnd    = xAP - windshieldW - 3;
+  const bPillar = wStart + (wEnd - wStart) * 0.50;
+  ctx.fillStyle = glassColor;
+  ctx.fillRect(wStart,     winTop, bPillar - wStart - 2, winBot - winTop);
+  ctx.fillRect(bPillar + 2, winTop, wEnd - bPillar - 2,   winBot - winTop);
+
+  // B-pillar strip
+  ctx.fillStyle = shade(color, -0.26);
+  ctx.fillRect(bPillar - 2, winTop - 1, 4, winBot - winTop + 1);
+
+  // windshield — slanted trapezoid (Lada 2107 upright lean)
+  ctx.fillStyle = glassColor;
   ctx.beginPath();
-  ctx.moveTo(L + CW * 0.21, cy - CH);
-  ctx.lineTo(L + CW * 0.22, cy - CH + 4);
-  ctx.lineTo(L + CW * 0.70, cy - CH + 4);
-  ctx.lineTo(L + CW * 0.71, cy - CH);
+  ctx.moveTo(xAP - windshieldW, winBot);
+  ctx.lineTo(xAPt - windshieldW, winTop);
+  ctx.lineTo(xAPt, winTop);
+  ctx.lineTo(xAP,  winBot);
   ctx.closePath(); ctx.fill();
 
-  // windows
-  ctx.fillStyle = 'rgba(25,45,75,0.90)';
-  // rear window
+  // window glint
+  ctx.strokeStyle = 'rgba(215,235,255,0.16)'; ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(L + CW * 0.16, cy - CH * 0.51); ctx.lineTo(L + CW * 0.21, cy - CH + 5);
-  ctx.lineTo(L + CW * 0.34, cy - CH + 5);    ctx.lineTo(L + CW * 0.34, cy - CH * 0.52);
-  ctx.closePath(); ctx.fill();
-  // main side window
-  ctx.beginPath();
-  ctx.moveTo(L + CW * 0.36, cy - CH * 0.51); ctx.lineTo(L + CW * 0.36, cy - CH + 5);
-  ctx.lineTo(L + CW * 0.70, cy - CH + 5);    ctx.lineTo(L + CW * 0.73, cy - CH * 0.51);
-  ctx.closePath(); ctx.fill();
-  // windshield
-  ctx.beginPath();
-  ctx.moveTo(L + CW * 0.75, cy - CH * 0.51); ctx.lineTo(L + CW * 0.72, cy - CH + 5);
-  ctx.lineTo(L + CW * 0.77, cy - CH + 5);    ctx.lineTo(L + CW * 0.79, cy - CH * 0.51);
-  ctx.closePath(); ctx.fill();
-  // glint
-  ctx.strokeStyle = 'rgba(200,220,255,0.15)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(L + CW * 0.37, cy - CH + 6); ctx.lineTo(L + CW * 0.50, cy - CH + 6); ctx.stroke();
+  ctx.moveTo(wStart + 2, winTop + 3);
+  ctx.lineTo(bPillar - 5, winTop + 3);
+  ctx.stroke();
 
-  // chrome trim
-  ctx.strokeStyle = 'rgba(195,185,165,0.45)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(L + CW * 0.14, cy - CH * 0.60); ctx.lineTo(L + CW * 0.75, cy - CH * 0.58); ctx.stroke();
+  // ── wheel arches ──────────────────────────────────────────────────────────
+  ctx.fillStyle = shade(color, -0.30);
+  ctx.beginPath(); ctx.arc(rWX, WY, WR + 4, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.arc(fWX, WY, WR + 4, Math.PI, 0); ctx.fill();
 
-  // wheel arches
-  const rWX = L + CW * 0.22, fWX = L + CW * 0.75;
-  ctx.fillStyle = shade(color, -0.28);
-  for (const wx of [rWX, fWX]) { ctx.beginPath(); ctx.arc(wx, WY, WR + 3, Math.PI, 0); ctx.fill(); }
+  // ── rear bumper ───────────────────────────────────────────────────────────
+  const bumpH = bumperBotY - bodyBotY;
+  ctx.fillStyle = shade(color, -0.38);
+  ctx.fillRect(xR0, bodyBotY, xR1 - xR0, bumpH);
+  ctx.fillStyle = 'rgba(200,192,178,0.65)';  // chrome overrider strip
+  ctx.fillRect(xR0, bodyBotY + bumpH * 0.35, xR1 - xR0, bumpH * 0.20);
 
-  // bumpers
-  ctx.fillStyle = shade(color, -0.32);
-  ctx.fillRect(L,          cy - CH * 0.22, 6, CH * 0.18);
-  ctx.fillRect(L + CW - 6, cy - CH * 0.22, 6, CH * 0.18);
+  // ── taillights (red rectangles, rear face) ────────────────────────────────
+  const tlTop = deckY + 4;
+  const tlH   = (bodyBotY - deckY) * 0.50;
+  ctx.fillStyle = hit ? '#ff4422' : '#cc1100';
+  ctx.fillRect(xR1, tlTop, 7, tlH);
+  ctx.fillStyle = hit ? '#ff9977' : '#ff2200';   // bright inner
+  ctx.fillRect(xR1 + 1, tlTop + 2, 4, tlH * 0.36);
+  ctx.fillStyle = '#aa5500';                       // amber indicator
+  ctx.fillRect(xR1, tlTop + tlH + 2, 7, tlH * 0.28);
 
-  // taillights
-  ctx.fillStyle = hit ? '#ff3300' : '#aa2200';
-  ctx.fillRect(L + 6, cy - CH * 0.38, 5, CH * 0.13);
+  // ── front bumper + spoiler lip ────────────────────────────────────────────
+  ctx.fillStyle = shade(color, -0.38);
+  ctx.fillRect(xF0, bodyBotY, xF1 - xF0, bumpH);
+  ctx.fillStyle = 'rgba(200,192,178,0.65)';
+  ctx.fillRect(xF0, bodyBotY + bumpH * 0.35, xF1 - xF0, bumpH * 0.20);
+  ctx.fillStyle = '#181818';   // rubber spoiler lip
+  ctx.fillRect(xF0 - CW * 0.010, bumperBotY - 2, CW * 0.048, 4);
 
-  // TON-diamond headlight
-  const hlCX = L + CW - 3, hlCY = cy - CH * 0.32;
-  const dlW  = CH * 0.17,  dlH  = CH * 0.13;
-  ctx.shadowColor = '#00aaff'; ctx.shadowBlur = 16;
+  // ── grille (dark rectangle with horizontal slats) ─────────────────────────
+  const gTop = deckY + (bodyBotY - deckY) * 0.07;
+  const gH   = (bodyBotY - deckY) * 0.57;
+  ctx.fillStyle = '#0c0d10';
+  ctx.fillRect(xF0, gTop, xF1 - xF0, gH);
+  ctx.strokeStyle = '#20242e'; ctx.lineWidth = 1;
+  for (let i = 1; i < 5; i++) {
+    const gy = gTop + gH * (i / 5);
+    ctx.beginPath(); ctx.moveTo(xF0, gy); ctx.lineTo(xF1, gy); ctx.stroke();
+  }
+
+  // ── TON diamond headlight (neon blue, centred on grille) ──────────────────
+  const hlCX = xF0 + (xF1 - xF0) * 0.50;
+  const hlCY = gTop + gH * 0.40;
+  const dlW  = CH * 0.130;
+  const dlH  = CH * 0.095;
+  ctx.shadowColor = '#00aaff'; ctx.shadowBlur = 18;
   ctx.fillStyle   = '#70d8ff';
   ctx.beginPath();
-  ctx.moveTo(hlCX, hlCY - dlH); ctx.lineTo(hlCX + dlW, hlCY);
-  ctx.lineTo(hlCX, hlCY + dlH); ctx.lineTo(hlCX - dlW, hlCY);
+  ctx.moveTo(hlCX,       hlCY - dlH);
+  ctx.lineTo(hlCX + dlW, hlCY);
+  ctx.lineTo(hlCX,       hlCY + dlH);
+  ctx.lineTo(hlCX - dlW, hlCY);
   ctx.closePath(); ctx.fill();
   ctx.shadowBlur = 6; ctx.fillStyle = '#d8f4ff';
   ctx.beginPath();
-  ctx.moveTo(hlCX, hlCY - dlH * 0.5); ctx.lineTo(hlCX + dlW * 0.5, hlCY);
-  ctx.lineTo(hlCX, hlCY + dlH * 0.5); ctx.lineTo(hlCX - dlW * 0.5, hlCY);
+  ctx.moveTo(hlCX,            hlCY - dlH * 0.5);
+  ctx.lineTo(hlCX + dlW * 0.5, hlCY);
+  ctx.lineTo(hlCX,            hlCY + dlH * 0.5);
+  ctx.lineTo(hlCX - dlW * 0.5, hlCY);
   ctx.closePath(); ctx.fill();
   ctx.shadowBlur = 0;
 
-  // wheels
+  // ── wheels ─────────────────────────────────────────────────────────────────
   drawWheel(ctx, rWX, WY, WR);
   drawWheel(ctx, fWX, WY, WR);
 
-  // pothole splash
+  // ── pothole splash ──────────────────────────────────────────────────────────
   if (hit) {
     ctx.fillStyle = 'rgba(55,45,35,0.72)';
     for (let i = 0; i < 6; i++) {
@@ -569,10 +643,10 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     }
   }
 
-  // winner flash
+  // ── winner flash ────────────────────────────────────────────────────────────
   if (flashOn) {
     ctx.fillStyle = 'rgba(255,215,40,0.28)';
-    ctx.fillRect(L - 6, cy - CH - 6, CW + 12, CH + 12);
+    ctx.fillRect(L - 6, roofY - 6, CW + 12, bumperBotY - roofY + 12);
   }
 
   ctx.restore();
