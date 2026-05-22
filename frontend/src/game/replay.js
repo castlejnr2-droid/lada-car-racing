@@ -444,101 +444,95 @@ function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
 }
 
 // ─── Lada 2107 ───────────────────────────────────────────────────────────────
-// Boxy Soviet sedan side profile. Front = RIGHT, rear = LEFT.
+// Two-box sedan: full-width lower body rectangle + cabin rectangle on top.
+// Both are the same colour → seamless flush join, no truck-cab gap.
+// Front = RIGHT, rear = LEFT.
 function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const L  = cx - CW / 2;   // rear (left) edge
-  const WR = CH * 0.280;    // wheel radius = 28% of car height
+  const WR = CH * 0.280;    // wheel radius (28% of car height)
   const WY = cy;             // wheel centre Y
 
   // ── vertical levels ──────────────────────────────────────────────────────
-  const bodyBotY   = WY - WR * 0.20;        // bottom of side panels / sill
-  const deckY      = WY - CH * 0.46;        // hood and trunk deck height
-  const roofY      = WY - CH * 0.90;        // roof — low and flat (brick on wheels)
-  const bumperBotY = bodyBotY + CH * 0.07;  // bottom of bumpers
+  // Lower body is 60% of total height, cabin 40% → no truck-cab look.
+  const bodyBotY   = WY - WR * 0.38;    // body bottom (wheel protrudes below)
+  const deckY      = WY - CH * 0.52;    // window sill / top of lower body
+  const roofY      = WY - CH * 0.84;    // roof top  (cabin height = 0.32 × CH)
+  const bumperBotY = bodyBotY + CH * 0.06;
 
   // ── horizontal landmarks ─────────────────────────────────────────────────
-  // Proportions: trunk 25% | cabin 35% | hood 40% (of total CW)
-  const xR0  = L;                  // rear bumper outer face
-  const xR1  = L + CW * 0.032;    // rear bumper inner / body rear face
-  const xCP  = L + CW * 0.252;    // C-pillar base  (trunk 25% from rear)
-  const xCPt = L + CW * 0.266;    // C-pillar top   (slight lean)
-  const xAP  = L + CW * 0.560;    // A-pillar base  (cabin 35% → hood 40% from here)
-  const xAPt = L + CW * 0.536;    // A-pillar top   (slight lean)
-  const xF0  = L + CW * 0.965;    // front face / grille start
-  const xF1  = L + CW;            // front bumper tip
+  // Trunk ~20% | Cabin ~40% | Hood ~33%  (bumpers ~7%)
+  const xR0  = L;
+  const xR1  = L + CW * 0.032;   // rear bumper inner / body rear face
+  const xCP  = L + CW * 0.235;   // C-pillar base  (end of trunk)
+  const xCPt = L + CW * 0.248;   // C-pillar top   (notchback lean: top slightly forward)
+  const xAP  = L + CW * 0.635;   // A-pillar base  (end of cabin)
+  const xAPt = L + CW * 0.616;   // A-pillar top   (windshield lean: top slightly back)
+  const xF0  = L + CW * 0.965;   // front face / grille
+  const xF1  = L + CW;
 
-  // wheel centres — close to ends (wide Soviet stance)
+  // wheel centres — pushed toward ends for wide Soviet stance
   const rWX = L + CW * 0.192;
   const fWX = L + CW * 0.842;
 
   ctx.save();
 
-  // ── exhaust smoke (rear) ─────────────────────────────────────────────────
+  // ── exhaust smoke ─────────────────────────────────────────────────────────
   if (speed > 0.8) {
-    // more puffs and larger at high speed
     const n        = hit ? 5 : Math.min(5, Math.ceil(speed / 1.6));
     const sizeMult = hit ? 1.6 : (1 + speed * 0.08);
     for (let i = 0; i < n; i++) {
-      const r  = (4 + i * 4.5) * sizeMult;
-      const ox = -(i * 16 + 12);
-      const oy = -i * 3;
       ctx.fillStyle = hit
         ? `rgba(80,65,45,${0.58 - i * 0.10})`
         : `rgba(125,118,110,${0.35 - i * 0.06})`;
-      ctx.beginPath(); ctx.arc(xR0 + ox, bodyBotY + oy, r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(xR0 - i * 16 - 12, bodyBotY - i * 3, (4 + i * 4.5) * sizeMult, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
-  // ── speed lines (horizontal white streaks at high speed) ─────────────────
+  // ── speed lines ──────────────────────────────────────────────────────────
   if (speed > 2.5 && !hit) {
     ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1.5;
     for (let i = 0; i < 5; i++) {
       const len = 18 + (4 - i) * 9 + speed * 2;
-      const ly  = bodyBotY - (i * CH * 0.095 + CH * 0.07);
       ctx.beginPath();
-      ctx.moveTo(xR0 - len - 8, ly);
-      ctx.lineTo(xR0 - 8,       ly);
+      ctx.moveTo(xR0 - len - 8, bodyBotY - i * CH * 0.095 - CH * 0.07);
+      ctx.lineTo(xR0 - 8,       bodyBotY - i * CH * 0.095 - CH * 0.07);
       ctx.stroke();
     }
   }
 
-  // ── main body silhouette (one boxy path) ─────────────────────────────────
-  // Rear face and trunk top are vertical/flat; C-pillar nearly vertical;
-  // roof flat; A-pillar slight lean; hood flat; front face vertical.
+  // ── LOWER BODY — full-width rectangle (trunk + doors lower + hood) ────────
+  ctx.fillStyle = color;
+  ctx.fillRect(xR1, deckY, xF0 - xR1, bodyBotY - deckY);
+
+  // ── CABIN — rectangle that sits flush on top of the lower body ────────────
+  // Pillars have a tiny lean so it reads as a notchback, not a box cutter.
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.moveTo(xR1,  bodyBotY);   // rear bottom
-  ctx.lineTo(xR1,  deckY);      // rear face — vertical
-  ctx.lineTo(xCP,  deckY);      // trunk deck — flat
-  ctx.lineTo(xCPt, roofY);      // C-pillar  — near-vertical
-  ctx.lineTo(xAPt, roofY);      // roof      — flat
-  ctx.lineTo(xAP,  deckY);      // A-pillar  — slight lean
-  ctx.lineTo(xF0,  deckY);      // hood top  — flat
-  ctx.lineTo(xF0,  bodyBotY);   // front face — vertical
+  ctx.moveTo(xCP,  deckY);    // C-pillar base — on the deck seam
+  ctx.lineTo(xCPt, roofY);    // C-pillar top
+  ctx.lineTo(xAPt, roofY);    // roof (dead flat)
+  ctx.lineTo(xAP,  deckY);    // A-pillar base — back on the deck seam
   ctx.closePath();
   ctx.fill();
 
-  // sill / rocker panel strip (thin darker band at bottom of doors)
-  ctx.fillStyle = shade(color, -0.20);
-  ctx.fillRect(xR1, bodyBotY - CH * 0.055, xF0 - xR1, CH * 0.055);
+  // roof top shading (very subtle — keeps it flat, not domed)
+  ctx.fillStyle = shade(color, -0.15);
+  ctx.fillRect(xCPt, roofY, xAPt - xCPt, 3);
 
-  // roof top shade
-  ctx.fillStyle = shade(color, -0.22);
-  ctx.fillRect(xCPt, roofY, xAPt - xCPt, 4);
-
-  // belt-line crease
-  const beltY = deckY + (bodyBotY - deckY) * 0.38;
-  ctx.strokeStyle = 'rgba(195,188,168,0.45)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(xR1, beltY); ctx.lineTo(xF0, beltY); ctx.stroke();
+  // belt-line chrome strip at the deck seam (window-sill level)
+  ctx.strokeStyle = 'rgba(195,188,168,0.55)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(xR1, deckY); ctx.lineTo(xF0, deckY); ctx.stroke();
 
   // ── windows ──────────────────────────────────────────────────────────────
-  const winTop      = roofY + 3;    // tighter gap — taller, squarer windows
-  const winBot      = deckY + 3;
-  const glassColor  = 'rgba(18,35,65,0.92)';
-  const windshieldW = CW * 0.070;   // horizontal depth of windshield glass
+  const winTop     = roofY + 3;
+  const winBot     = deckY + 3;
+  const glassColor = 'rgba(18,35,65,0.92)';
+  const windshieldW = CW * 0.065;   // windshield glass depth (side view)
 
-  // rear quarter window (small trapezoid near C-pillar)
-  const rqEndX = xCP + (xAP - xCP) * 0.20;
+  // rear quarter window (small, near C-pillar)
+  const rqEndX = xCP + (xAP - xCP) * 0.19;
   ctx.fillStyle = glassColor;
   ctx.beginPath();
   ctx.moveTo(xCP + 3,  winBot);
@@ -547,28 +541,28 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.lineTo(rqEndX,   winBot);
   ctx.closePath(); ctx.fill();
 
-  // two main door windows separated by B-pillar
+  // two main door windows + B-pillar
   const wStart  = rqEndX + 3;
   const wEnd    = xAP - windshieldW - 3;
   const bPillar = wStart + (wEnd - wStart) * 0.50;
   ctx.fillStyle = glassColor;
-  ctx.fillRect(wStart,     winTop, bPillar - wStart - 2, winBot - winTop);
+  ctx.fillRect(wStart,      winTop, bPillar - wStart - 2, winBot - winTop);
   ctx.fillRect(bPillar + 2, winTop, wEnd - bPillar - 2,   winBot - winTop);
 
-  // B-pillar strip
+  // B-pillar
   ctx.fillStyle = shade(color, -0.26);
   ctx.fillRect(bPillar - 2, winTop - 1, 4, winBot - winTop + 1);
 
-  // windshield — slanted trapezoid (Lada 2107 upright lean)
+  // windshield (upright Soviet slant)
   ctx.fillStyle = glassColor;
   ctx.beginPath();
-  ctx.moveTo(xAP - windshieldW, winBot);
+  ctx.moveTo(xAP  - windshieldW, winBot);
   ctx.lineTo(xAPt - windshieldW, winTop);
   ctx.lineTo(xAPt, winTop);
   ctx.lineTo(xAP,  winBot);
   ctx.closePath(); ctx.fill();
 
-  // window glint
+  // glint on rear door window
   ctx.strokeStyle = 'rgba(215,235,255,0.16)'; ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(wStart + 2, winTop + 3);
@@ -584,30 +578,30 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const bumpH = bumperBotY - bodyBotY;
   ctx.fillStyle = shade(color, -0.38);
   ctx.fillRect(xR0, bodyBotY, xR1 - xR0, bumpH);
-  ctx.fillStyle = 'rgba(200,192,178,0.65)';  // chrome overrider strip
+  ctx.fillStyle = 'rgba(200,192,178,0.65)';
   ctx.fillRect(xR0, bodyBotY + bumpH * 0.35, xR1 - xR0, bumpH * 0.20);
 
-  // ── taillights (red rectangles, rear face) ────────────────────────────────
+  // ── taillights ────────────────────────────────────────────────────────────
   const tlTop = deckY + 4;
-  const tlH   = (bodyBotY - deckY) * 0.50;
+  const tlH   = (bodyBotY - deckY) * 0.52;
   ctx.fillStyle = hit ? '#ff4422' : '#cc1100';
-  ctx.fillRect(xR1, tlTop, 7, tlH);
-  ctx.fillStyle = hit ? '#ff9977' : '#ff2200';   // bright inner
-  ctx.fillRect(xR1 + 1, tlTop + 2, 4, tlH * 0.36);
-  ctx.fillStyle = '#aa5500';                       // amber indicator
-  ctx.fillRect(xR1, tlTop + tlH + 2, 7, tlH * 0.28);
+  ctx.fillRect(xR1, tlTop, 8, tlH);
+  ctx.fillStyle = hit ? '#ff9977' : '#ff2200';
+  ctx.fillRect(xR1 + 1, tlTop + 2, 5, tlH * 0.36);
+  ctx.fillStyle = '#aa5500';
+  ctx.fillRect(xR1, tlTop + tlH + 2, 8, tlH * 0.28);
 
-  // ── front bumper + spoiler lip ────────────────────────────────────────────
+  // ── front bumper + spoiler lip ─────────────────────────────────────────────
   ctx.fillStyle = shade(color, -0.38);
   ctx.fillRect(xF0, bodyBotY, xF1 - xF0, bumpH);
   ctx.fillStyle = 'rgba(200,192,178,0.65)';
   ctx.fillRect(xF0, bodyBotY + bumpH * 0.35, xF1 - xF0, bumpH * 0.20);
-  ctx.fillStyle = '#181818';   // rubber spoiler lip
+  ctx.fillStyle = '#181818';
   ctx.fillRect(xF0 - CW * 0.010, bumperBotY - 2, CW * 0.048, 4);
 
-  // ── grille (dark rectangle with horizontal slats) ─────────────────────────
+  // ── grille ────────────────────────────────────────────────────────────────
   const gTop = deckY + (bodyBotY - deckY) * 0.07;
-  const gH   = (bodyBotY - deckY) * 0.57;
+  const gH   = (bodyBotY - deckY) * 0.60;
   ctx.fillStyle = '#0c0d10';
   ctx.fillRect(xF0, gTop, xF1 - xF0, gH);
   ctx.strokeStyle = '#353d4a'; ctx.lineWidth = 1.5;
@@ -616,7 +610,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     ctx.beginPath(); ctx.moveTo(xF0, gy); ctx.lineTo(xF1, gy); ctx.stroke();
   }
 
-  // ── TON diamond headlight (neon blue, centred on grille) ──────────────────
+  // ── TON diamond headlight ─────────────────────────────────────────────────
   const hlCX = xF0 + (xF1 - xF0) * 0.50;
   const hlCY = gTop + gH * 0.40;
   const dlW  = CH * 0.130;
@@ -631,9 +625,9 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.closePath(); ctx.fill();
   ctx.shadowBlur = 6; ctx.fillStyle = '#d8f4ff';
   ctx.beginPath();
-  ctx.moveTo(hlCX,            hlCY - dlH * 0.5);
+  ctx.moveTo(hlCX,             hlCY - dlH * 0.5);
   ctx.lineTo(hlCX + dlW * 0.5, hlCY);
-  ctx.lineTo(hlCX,            hlCY + dlH * 0.5);
+  ctx.lineTo(hlCX,             hlCY + dlH * 0.5);
   ctx.lineTo(hlCX - dlW * 0.5, hlCY);
   ctx.closePath(); ctx.fill();
   ctx.shadowBlur = 0;
