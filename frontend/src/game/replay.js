@@ -59,8 +59,8 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
   const TREE_H = H * 0.08;
   const ROAD_Y = SKY_H + TREE_H;
   const LANE_H = (H - ROAD_Y) / N;
-  const CAR_W  = Math.min(LANE_H * 2.0, 120);
-  const CAR_H  = CAR_W * 0.44;
+  const CAR_W  = Math.min(LANE_H * 2.4, 144);  // +20% wider / longer
+  const CAR_H  = CAR_W * 0.374;               // -15% shorter (low-slung Soviet sedan)
 
   const FINISH_X = W * FINISH_X_FRAC;
 
@@ -442,13 +442,13 @@ function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
 // Boxy Soviet sedan side profile. Front = RIGHT, rear = LEFT.
 function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const L  = cx - CW / 2;   // rear (left) edge
-  const WR = CH * 0.235;    // wheel radius
+  const WR = CH * 0.294;    // wheel radius (+25% larger)
   const WY = cy;             // wheel centre Y
 
   // ── vertical levels ──────────────────────────────────────────────────────
   const bodyBotY   = WY - WR * 0.22;        // bottom of side panels / sill
   const deckY      = WY - CH * 0.47;        // hood and trunk deck height
-  const roofY      = WY - CH * 0.98;        // roof top
+  const roofY      = WY - CH * 0.92;        // roof top (lower for flat, low-slung look)
   const bumperBotY = bodyBotY + CH * 0.075; // bottom of bumpers
 
   // ── horizontal landmarks ─────────────────────────────────────────────────
@@ -456,14 +456,14 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const xR1  = L + CW * 0.036;    // rear bumper inner / body rear face
   const xCP  = L + CW * 0.255;    // C-pillar base  (trunk/cabin junction at deck)
   const xCPt = L + CW * 0.272;    // C-pillar top   (trunk/cabin junction at roof)
-  const xAP  = L + CW * 0.738;    // A-pillar base  (cabin/hood junction at deck)
-  const xAPt = L + CW * 0.712;    // A-pillar top   (cabin/hood junction at roof)
+  const xAP  = L + CW * 0.648;    // A-pillar base  — moved back for longer hood (~35% front section)
+  const xAPt = L + CW * 0.624;    // A-pillar top   (cabin/hood junction at roof)
   const xF0  = L + CW * 0.964;    // front face / grille start
   const xF1  = L + CW;            // front bumper tip
 
   // wheel centres
   const rWX = L + CW * 0.215;
-  const fWX = L + CW * 0.792;
+  const fWX = L + CW * 0.808;    // moved forward to sit under the longer hood
 
   ctx.save();
 
@@ -525,7 +525,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const winTop      = roofY + 5;
   const winBot      = deckY + 4;
   const glassColor  = 'rgba(18,35,65,0.92)';
-  const windshieldW = CW * 0.058;   // horizontal depth of windshield glass
+  const windshieldW = CW * 0.062;   // horizontal depth of windshield glass
 
   // rear quarter window (small trapezoid near C-pillar)
   const rqEndX = xCP + (xAP - xCP) * 0.20;
@@ -600,7 +600,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const gH   = (bodyBotY - deckY) * 0.57;
   ctx.fillStyle = '#0c0d10';
   ctx.fillRect(xF0, gTop, xF1 - xF0, gH);
-  ctx.strokeStyle = '#20242e'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#353d4a'; ctx.lineWidth = 1.5;
   for (let i = 1; i < 5; i++) {
     const gy = gTop + gH * (i / 5);
     ctx.beginPath(); ctx.moveTo(xF0, gy); ctx.lineTo(xF1, gy); ctx.stroke();
