@@ -27,12 +27,20 @@ const CAR_H = 48;
 export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.width  = canvas.clientWidth  * dpr;
-  const H = canvas.height = canvas.clientHeight * dpr;
+
+  // Measure the canvas's CSS dimensions robustly. clientWidth/clientHeight can
+  // be 0 in Telegram's WebView if layout hasn't settled; fall through to
+  // getBoundingClientRect and then window dimensions as a last resort.
+  const rect = canvas.getBoundingClientRect();
+  const cssW = canvas.clientWidth  || rect.width  || window.innerWidth  || 360;
+  const cssH = canvas.clientHeight || rect.height || window.innerHeight || 640;
+
+  const W = canvas.width  = cssW * dpr;
+  const H = canvas.height = cssH * dpr;
   ctx.scale(dpr, dpr);
 
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
+  const w = cssW;
+  const h = cssH;
 
   const rng = createRng(seedFromHex(hexSeed));
   const track = buildTrack(rng, LANE_COUNT);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTonAddress } from '@tonconnect/ui-react';
 import { fetchRace } from '../api/races.js';
@@ -18,12 +18,15 @@ export default function Race() {
   const navigate = useNavigate();
   const address = useTonAddress();
   const { send } = useTonSender();
-  const canvasRef = useRef(null);
   const replayStopRef = useRef(null);
 
   const [race, setRace] = useState(null);
   const [busy, setBusy] = useState(false);
   const [replayDone, setReplayDone] = useState(false);
+  // Callback ref — stored in state so the replay effect re-fires when the
+  // canvas mounts, regardless of whether race data arrived first or second.
+  const [canvasEl, setCanvasEl] = useState(null);
+  const canvasRef = useCallback((el) => setCanvasEl(el), []);
 
   useEffect(() => useBackButton(() => navigate('/')), [navigate]);
 
@@ -47,10 +50,14 @@ export default function Race() {
     return () => { cancelled = true; };
   }, [raceId]);
 
-  // Once race is settled and we have a combined_seed, run the replay
+  // Start replay once we have both: the race result (state=active/settled +
+  // combined_seed) AND the canvas element in the DOM. Using canvasEl (state)
+  // instead of a plain ref ensures this effect re-fires when the canvas mounts,
+  // no matter which arrives first — the race data or the canvas mount.
   useEffect(() => {
-    if (!(race?.state === 'settled' || race?.state === 'active') || !race.combined_seed || !canvasRef.current) return;
-    replayStopRef.current = runReplay(canvasRef.current, race.combined_seed, {
+    if (!(race?.state === 'settled' || race?.state === 'active')) return;
+    if (!race.combined_seed || !canvasEl) return;
+    replayStopRef.current = runReplay(canvasEl, race.combined_seed, {
       onComplete: () => {
         setReplayDone(true);
         haptic.success();
@@ -58,7 +65,7 @@ export default function Race() {
       },
     });
     return () => replayStopRef.current?.();
-  }, [race?.state, race?.combined_seed, raceId]);
+  }, [race?.state, race?.combined_seed, canvasEl, raceId]);
 
   // Pick the current MainButton based on race phase + whether we acted yet
   useEffect(() => {
@@ -174,7 +181,7 @@ export default function Race() {
   return (
     <div className="race">
       <div className="race__canvas-wrap">
-        <canvas ref={canvasRef} className="race__canvas" />
+        <canvas ref={canvasRef} className="race__canvas" width="100" height="100" />
         {race.state !== 'settled' && race.state !== 'active' && (
           <PhaseOverlay race={race} address={address} onRefund={handleTimeoutRefund} />
         )}
