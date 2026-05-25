@@ -490,71 +490,183 @@ function drawRoad(ctx, W, H, N, roadY, laneH, scrollX, cracks, potholes) {
   }
 }
 
+// ─── Soviet building colour palettes (dark grey / blue-grey variants) ────────
+// Each entry is [r, g, b] for the base concrete tone.
+const BPAL = [
+  [30, 32, 38],  // blue-charcoal  — classic панельный дом
+  [28, 29, 31],  // neutral dark grey
+  [32, 31, 30],  // warm grey      — older weathered concrete
+  [26, 30, 36],  // deep navy grey
+  [34, 33, 31],  // brownish grey  — стained concrete
+  [29, 33, 35],  // cool blue-grey — кирпич / newer panel
+];
+
+// ─── fast deterministic hash, returns 0..1 ───────────────────────────────────
+function fhash(n) {
+  let x = (Math.imul(n | 0, 2654435761) >>> 0);
+  x = (Math.imul((x ^ (x >>> 16)), 0x45d9f3b) >>> 0);
+  x = (Math.imul((x ^ (x >>> 16)), 0x45d9f3b) >>> 0);
+  return (x >>> 0) / 0x100000000;
+}
+
+// ─── per-building window grid ─────────────────────────────────────────────────
+function drawBuildingWindows(ctx, seed, bX, bTopY, bW, bH, sy, t) {
+  // Window and spacing sizes scale with depth
+  const wW  = Math.max(1.5, Math.min(bW * 0.13, t * 7));
+  const wH  = Math.max(1.0, Math.min(bH * 0.09, t * 5));
+  const gX  = Math.max(wW * 0.7, t * 3.5);   // column gap
+  const gY  = Math.max(wH * 1.0, t * 5.5);   // row gap (floor height)
+  const padX = Math.max(2, bW * 0.07);
+  const padY = Math.max(2, bH * 0.06);
+
+  let row = 0;
+  for (let wy = bTopY + padY; wy + wH < sy - 2; wy += wH + gY, row++) {
+    let col = 0;
+    for (let wx = bX + padX; wx + wW < bX + bW - padX; wx += wW + gX, col++) {
+      const ws = (seed * 7919 + row * 1009 + col * 307) | 0;
+      const r  = fhash(ws);
+
+      if (r < 0.20) continue;           // light off
+
+      if (r > 0.93) {
+        // Rare: blue-white TV/monitor glow
+        ctx.fillStyle = `rgba(155,180,215,${0.35 + fhash(ws + 1) * 0.30})`;
+      } else if (r > 0.72) {
+        // Bright warm light
+        ctx.fillStyle = `rgba(255,198,75,${0.60 + fhash(ws + 2) * 0.30})`;
+      } else {
+        // Dim warm light
+        ctx.fillStyle = `rgba(195,148,55,${0.28 + fhash(ws + 3) * 0.35})`;
+      }
+      ctx.fillRect(wx, wy, wW, wH);
+    }
+  }
+}
+
+// ─── per-building rooftop details ─────────────────────────────────────────────
+function drawRooftopFeatures(ctx, seed, bX, bTopY, bW, baseCol) {
+  const dark = shade(baseCol, -0.28);
+
+  // Stairwell / elevator penthouse box
+  if (fhash(seed * 13) > 0.52) {
+    const phW = Math.max(4, bW * 0.18);
+    const phH = Math.max(3, bW * 0.11);
+    const phX = bX + bW * (0.04 + fhash(seed * 17) * 0.50);
+    ctx.fillStyle = shade(baseCol, -0.18);
+    ctx.fillRect(phX, bTopY - phH, phW, phH);
+  }
+
+  // Water tower (rectangle body + triangle roof + two legs)
+  if (fhash(seed * 19) > 0.60) {
+    const twW = Math.max(3, bW * 0.14);
+    const twH = Math.max(4, bW * 0.24);
+    const twX = bX + bW * (0.20 + fhash(seed * 23) * 0.55);
+    ctx.fillStyle = dark;
+    ctx.fillRect(twX - twW / 2, bTopY - twH, twW, twH * 0.70);
+    // Conical cap
+    ctx.beginPath();
+    ctx.moveTo(twX - twW / 2 - 1, bTopY - twH * 0.70);
+    ctx.lineTo(twX, bTopY - twH * 1.00);
+    ctx.lineTo(twX + twW / 2 + 1, bTopY - twH * 0.70);
+    ctx.closePath();
+    ctx.fill();
+    // Support legs
+    ctx.fillStyle = shade(dark, -0.12);
+    ctx.fillRect(twX - twW / 2 + 1, bTopY - twH * 0.38, 1, twH * 0.38);
+    ctx.fillRect(twX + twW / 2 - 2, bTopY - twH * 0.38, 1, twH * 0.38);
+  }
+
+  // TV antenna / mast
+  if (fhash(seed * 29) > 0.45) {
+    const anH  = Math.max(5, bW * 0.32);
+    const anX  = bX + bW * (0.55 + fhash(seed * 31) * 0.35);
+    ctx.strokeStyle = shade(dark, -0.15);
+    ctx.lineWidth = Math.max(0.5, bW * 0.018);
+    ctx.beginPath(); ctx.moveTo(anX, bTopY); ctx.lineTo(anX, bTopY - anH); ctx.stroke();
+    // Cross-bar
+    const cbY = bTopY - anH * 0.55;
+    const cbL = anH * 0.28;
+    ctx.beginPath(); ctx.moveTo(anX - cbL, cbY); ctx.lineTo(anX + cbL, cbY); ctx.stroke();
+  }
+}
+
 // ─── front-view perspective road + Soviet cityscape ──────────────────────────
 function drawRoadFront(ctx, W, H, N, roadY, VP_Y, ROAD_HW, bannerY, bannerH) {
   const vpX   = W / 2;
   const roadH = H - VP_Y;
 
   // ── Soviet brutalist buildings — back to front ──────────────────────────
+  // Each depth slab is divided into 1-3 individual buildings per side,
+  // each with its own shade, window grid, and rooftop features.
   const SLABS = 12;
   for (let si = 0; si < SLABS; si++) {
-    const t = (si + 1) / SLABS;
+    const t     = (si + 1) / SLABS;
     const sy    = VP_Y + roadH * t;
     const roadL = vpX - ROAD_HW * t;
     const roadR = vpX + ROAD_HW * t;
     const leftW  = Math.max(0, roadL);
     const rightW = Math.max(0, W - roadR);
 
-    const hSeed = ((si * 47 + 11) % 100) / 100;
-    const bHFrac = 0.50 + hSeed * 0.65;
-    const bH = t * roadH * bHFrac * 1.2;
-    const bTopY = sy - bH;
+    // Number of distinct buildings to show in each strip at this depth
+    const nB = leftW > W * 0.20 ? 3 : leftW > W * 0.09 ? 2 : 1;
 
-    const v = Math.round(0x18 + si * 1.2);
-    const col = `rgb(${v},${v+3},${v+5})`;
+    for (let side = 0; side < 2; side++) {
+      const stripX = side === 0 ? 0 : roadR;
+      const stripW = side === 0 ? leftW : rightW;
+      if (stripW < 2) continue;
 
-    if (leftW > 1) {
-      ctx.fillStyle = col;
-      ctx.fillRect(0, bTopY, leftW, bH);
-      if (t > 0.18 && bH > 6) {
-        const wW = Math.max(1, t * 5.5), wH = Math.max(1, t * 3.5);
-        const spX = Math.max(wW + 2, t * 11), spY = Math.max(wH + 2, t * 10);
-        ctx.fillStyle = `rgba(215,165,55,${0.12 + t * 0.28})`;
-        for (let wx = 3; wx + wW < leftW; wx += spX) {
-          for (let wy = bTopY + spY * 0.5; wy + wH < sy - 2; wy += spY) {
-            if (Math.floor((wx * 7 + wy * 13 + si * 31)) % 5 === 0) continue;
-            ctx.fillRect(wx, wy, wW, wH);
-          }
+      const bldgW0 = stripW / nB;
+
+      for (let b = 0; b < nB; b++) {
+        const bSeed = si * 211 + side * 97 + b * 43;
+
+        // Slightly irregular building widths (±10%)
+        const wMod  = 0.90 + fhash(bSeed * 3) * 0.20;
+        const bW    = Math.max(2, (bldgW0 * wMod) - 1);   // -1 = thin gap
+        const bX    = stripX + b * bldgW0 + (bldgW0 - bW) * 0.5;
+
+        // Height: each building varies independently within slab range
+        const hFrac = 0.50 + fhash(bSeed * 7) * 0.65;
+        const hVar  = 0.82 + fhash(bSeed * 11) * 0.38;    // ±19% per building
+        const bH    = Math.max(4, t * roadH * hFrac * 1.2 * hVar);
+        const bTopY = sy - bH;
+
+        // Colour: pick palette + per-building luminance nudge
+        const palIdx = Math.floor(fhash(bSeed * 13) * BPAL.length);
+        const [r0, g0, b0] = BPAL[palIdx];
+        const lum   = (fhash(bSeed * 17) * 14) - 7;       // -7..+7
+        const clp   = (v) => Math.max(0, Math.min(255, Math.round(v + lum)));
+        const col   = `rgb(${clp(r0)},${clp(g0)},${clp(b0)})`;
+
+        // Building body
+        ctx.fillStyle = col;
+        ctx.fillRect(bX, bTopY, bW, bH);
+
+        // Window grid — skip tiny buildings
+        if (t > 0.14 && bH > 7 && bW > 5) {
+          drawBuildingWindows(ctx, bSeed, bX, bTopY, bW, bH, sy, t);
         }
-      }
-      if (t > 0.55 && leftW > 18) {
-        ctx.fillStyle = shade(col, -0.15);
-        ctx.fillRect(leftW * 0.3, bTopY - t * 6, t * 4, t * 6);
-        ctx.fillRect(leftW * 0.65, bTopY - t * 10, t * 3, t * 10);
-      }
-    }
 
-    if (rightW > 1) {
-      ctx.fillStyle = col;
-      ctx.fillRect(roadR, bTopY, rightW, bH);
-      if (t > 0.18 && bH > 6) {
-        const wW = Math.max(1, t * 5.5), wH = Math.max(1, t * 3.5);
-        const spX = Math.max(wW + 2, t * 11), spY = Math.max(wH + 2, t * 10);
-        ctx.fillStyle = `rgba(215,165,55,${0.12 + t * 0.28})`;
-        for (let wx = roadR + 3; wx + wW < W; wx += spX) {
-          for (let wy = bTopY + spY * 0.5; wy + wH < sy - 2; wy += spY) {
-            if (Math.floor((wx * 7 + wy * 13 + si * 31)) % 5 === 0) continue;
-            ctx.fillRect(wx, wy, wW, wH);
-          }
+        // Rooftop features — only on close enough / large enough buildings
+        if (t > 0.42 && bW > 12 && bH > 10) {
+          drawRooftopFeatures(ctx, bSeed, bX, bTopY, bW, col);
         }
-      }
-      if (t > 0.55 && rightW > 18) {
-        ctx.fillStyle = shade(col, -0.15);
-        ctx.fillRect(roadR + rightW * 0.25, bTopY - t * 8, t * 3, t * 8);
-        ctx.fillRect(roadR + rightW * 0.70, bTopY - t * 5, t * 4, t * 5);
       }
     }
   }
+
+  // ── Near-horizon city fog: veils the most distant buildings ──────────────
+  const fogDepth = roadH * 0.38;
+  const fog = ctx.createLinearGradient(0, VP_Y, 0, VP_Y + fogDepth);
+  fog.addColorStop(0,   'rgba(38,48,65,0.82)');
+  fog.addColorStop(0.5, 'rgba(38,48,65,0.38)');
+  fog.addColorStop(1,   'rgba(38,48,65,0)');
+  ctx.fillStyle = fog;
+  // Apply only to building strips, not over the centre road
+  const fogRoadL = vpX - ROAD_HW * 0.05;
+  const fogRoadR = vpX + ROAD_HW * 0.05;
+  ctx.fillRect(0,          VP_Y, fogRoadL,     fogDepth);
+  ctx.fillRect(fogRoadR,   VP_Y, W - fogRoadR, fogDepth);
 
   // ── road surface ──────────────────────────────────────────────────────────
   const roadGrad = ctx.createLinearGradient(0, VP_Y, 0, H);
