@@ -666,7 +666,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.shadowBlur = hit ? 6 : 4;
   ctx.fillStyle = hit ? '#ffaa88' : '#ff4400';
   ctx.fillRect(px(0.014), py(0.56), px(0.042) - px(0.014), py(0.62) - py(0.56));
-  ctx.shadowBlur = 0;
+  ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'; // must clear before drawing front end
   // amber indicator
   ctx.fillStyle = '#aa5500';
   ctx.fillRect(px(0.010), py(0.70), px(0.050) - px(0.010), py(0.73) - py(0.70));

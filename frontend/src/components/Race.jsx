@@ -192,13 +192,11 @@ export default function Race() {
           <PhaseOverlay race={race} address={address} onRefund={handleTimeoutRefund} />
         )}
       </div>
-      {race.combined_seed && (
-        <div style={{ textAlign: 'center', marginTop: 8 }}>
-          <button className="btn btn--ghost btn--small" onClick={toggleView}>
-            {viewMode === 'side' ? 'Front View' : 'Side View'}
-          </button>
-        </div>
-      )}
+      <div style={{ textAlign: 'center', marginTop: 8 }}>
+        <button className="btn btn--ghost btn--small" onClick={toggleView}>
+          {viewMode === 'side' ? 'Front View' : 'Side View'}
+        </button>
+      </div>
     </div>
   );
 }
