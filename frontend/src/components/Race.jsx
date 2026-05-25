@@ -19,10 +19,12 @@ export default function Race() {
   const address = useTonAddress();
   const { send } = useTonSender();
   const replayStopRef = useRef(null);
+  const viewModeRef   = useRef('side');   // 'side' | 'front' — read each frame, no re-render
 
   const [race, setRace] = useState(null);
   const [busy, setBusy] = useState(false);
   const [replayDone, setReplayDone] = useState(false);
+  const [viewMode, setViewMode] = useState('side');  // controls button label only
   // Callback ref — stored in state so the replay effect re-fires when the
   // canvas mounts, regardless of whether race data arrived first or second.
   const [canvasEl, setCanvasEl] = useState(null);
@@ -50,10 +52,7 @@ export default function Race() {
     return () => { cancelled = true; };
   }, [raceId]);
 
-  // Start replay once we have both: the race result (state=active/settled +
-  // combined_seed) AND the canvas element in the DOM. Using canvasEl (state)
-  // instead of a plain ref ensures this effect re-fires when the canvas mounts,
-  // no matter which arrives first — the race data or the canvas mount.
+  // Start replay once we have both: race result AND canvas in DOM.
   useEffect(() => {
     if (!(race?.state === 'settled' || race?.state === 'active')) return;
     if (!race.combined_seed || !canvasEl) return;
@@ -63,6 +62,7 @@ export default function Race() {
         haptic.success();
         clearSecret(raceId);
       },
+      getViewMode: () => viewModeRef.current,
     });
     return () => replayStopRef.current?.();
   }, [race?.state, race?.combined_seed, canvasEl, raceId]);
@@ -89,7 +89,6 @@ export default function Race() {
     if (race.state === 'awaiting_reveals' && !myRevealed) {
       return useMainButton('Reveal secret', () => handleReveal(), { enabled: !busy });
     }
-    // Default: waiting for opponent or chain confirmation
     return useMainButton('Waiting…', () => {}, { enabled: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [race, address, busy, replayDone]);
@@ -123,7 +122,7 @@ export default function Race() {
       haptic.medium();
       const secret = generateSecret();
       const commit = await commitOf(secret);
-      saveSecret(raceId, secret);                // persist BEFORE sending tx
+      saveSecret(raceId, secret);
       const tx = buildCommit(race.on_chain_id, commit);
       await send(tx);
       haptic.success();
@@ -164,6 +163,13 @@ export default function Race() {
     }
   }
 
+  function toggleView() {
+    haptic.tap();
+    const next = viewModeRef.current === 'side' ? 'front' : 'side';
+    viewModeRef.current = next;
+    setViewMode(next);
+  }
+
   // ─── Render ───
   if (!race) return <div className="empty">Loading race…</div>;
 
@@ -186,6 +192,13 @@ export default function Race() {
           <PhaseOverlay race={race} address={address} onRefund={handleTimeoutRefund} />
         )}
       </div>
+      {race.combined_seed && (
+        <div style={{ textAlign: 'center', marginTop: 8 }}>
+          <button className="btn btn--ghost btn--small" onClick={toggleView}>
+            {viewMode === 'side' ? 'Front View' : 'Side View'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

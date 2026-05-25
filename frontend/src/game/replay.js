@@ -12,21 +12,24 @@
  *   2. Once physics ends, winner drives to the finish line (55 frames).
  *   3. Winner crosses: particle burst + gold flash (50 frames).
  *   4. Brief hold (20 frames), then onComplete().
+ *
+ * View modes (toggled live via getViewMode callback):
+ *   'side'  — classic side-scrolling view (default)
+ *   'front' — head-on perspective view, Lada front face, road converging
  */
 import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── tunables ────────────────────────────────────────────────────────────────
-const PHYS_PER_FRAME = 3;    // physics steps per render frame (~10 s race @ 60 fps)
-const SCROLL_SCALE   = 1.25; // road-px per physics speed unit (2.5x faster feel)
-const LEAD_X_FRAC    = 0.30; // leader fixed screen-x (fraction of W) during race
-const SPREAD_SCALE   = 1.1;  // how far back a fully-lapped car appears (fraction of W)
-const FINISH_X_FRAC  = 0.72; // where the finish line sits on screen
+const PHYS_PER_FRAME = 3;    // physics steps per render frame
+const SCROLL_SCALE   = 1.25; // road-px per physics speed unit
+const LEAD_X_FRAC    = 0.30; // leader fixed screen-x (fraction of W)
+const SPREAD_SCALE   = 1.1;  // how far back a trailing car appears
+const FINISH_X_FRAC  = 0.72; // finish line position on screen
 
-// ending-sequence timing (frames @ ~60 fps → ~2.1 s total)
-const END_DRIVE     = 55;   // winner drives to finish line
-const END_CELEBRATE = 50;   // particle burst + gold flash
-const END_HOLD      = 20;   // pause before calling onComplete
+const END_DRIVE     = 55;
+const END_CELEBRATE = 50;
+const END_HOLD      = 20;
 const END_TOTAL     = END_DRIVE + END_CELEBRATE + END_HOLD;
 
 const CAR_COLORS = [
@@ -38,7 +41,7 @@ const CAR_COLORS = [
 ];
 
 // ─── entry point ─────────────────────────────────────────────────────────────
-export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
+export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = () => 'side' } = {}) {
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
 
@@ -60,46 +63,42 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
   const ROAD_Y = SKY_H + TREE_H;
   const LANE_H = (H - ROAD_Y) / N;
   const CAR_W  = Math.min(LANE_H * 2.4, 144);
-  const CAR_H  = CAR_W * 0.42;  // total bounding box height (wheel center at 78% from top)
+  const CAR_H  = CAR_W * 0.42;  // bounding box height; wheel centre at 78% from top
 
   const FINISH_X = W * FINISH_X_FRAC;
+  const scenery  = buildScenery(rng, W);
 
-  const scenery = buildScenery(rng, W);
-
-  // Celebration particles — not seeded (purely visual, outcome already decided)
   const CONFETTI_N = 30;
   const confetti = Array.from({ length: CONFETTI_N }, (_, i) => ({
-    angle:  (i / CONFETTI_N) * Math.PI * 2 + (Math.random() - 0.5) * 0.4,
-    speed:  2.0 + Math.random() * 3.8,
-    color:  ['#ffd700','#ff8800','#ff4455','#44ff88','#66bbff','#ffffff',
-             '#ffee00','#ff66cc'][Math.floor(Math.random() * 8)],
-    size:   2 + Math.random() * 3,
-    spin:   (Math.random() - 0.5) * 0.35,
-    rect:   Math.random() < 0.55,   // rect vs spark line
+    angle: (i / CONFETTI_N) * Math.PI * 2 + (Math.random() - 0.5) * 0.4,
+    speed: 2.0 + Math.random() * 3.8,
+    color: ['#ffd700','#ff8800','#ff4455','#44ff88','#66bbff','#ffffff',
+            '#ffee00','#ff66cc'][Math.floor(Math.random() * 8)],
+    size:  2 + Math.random() * 3,
+    spin:  (Math.random() - 0.5) * 0.35,
+    rect:  Math.random() < 0.55,
   }));
 
   let physTick   = 0;
   let frameCount = 0;
   let scrollX    = 0;
-  let endFrame   = -1;   // -1 = physics still running
+  let endFrame   = -1;
   let cancelled  = false;
   let rafId      = null;
 
-  // Snapshot of car positions (screen-x) the moment physics ends
   const endStartX = new Array(N).fill(0);
 
   function loop() {
     if (cancelled) return;
     frameCount++;
 
-    // ── physics advancement ───────────────────────────────────────────────
+    // ── physics ───────────────────────────────────────────────────────────
     if (endFrame < 0) {
       if (frameCount % PHYS_PER_FRAME === 0 && physTick < sim.history.length - 1) {
         physTick++;
         onTick?.(physTick, sim);
       }
       if (physTick >= sim.history.length - 1) {
-        // physics done — snapshot positions for ending interpolation
         const leadPos = Math.max(...sim.history[physTick].positions);
         for (let i = 0; i < N; i++) {
           endStartX[i] = W * LEAD_X_FRAC
@@ -111,23 +110,20 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
       endFrame++;
     }
 
-    const state      = sim.history[physTick];
-    const lastState  = sim.history[sim.history.length - 1];
-    const winnerSpd  = Math.max(...lastState.speeds, 1);
+    const state     = sim.history[physTick];
+    const lastState = sim.history[sim.history.length - 1];
+    const winnerSpd = Math.max(...lastState.speeds, 1);
 
     // ── road scroll ───────────────────────────────────────────────────────
     if (endFrame < 0) {
       scrollX += Math.max(...state.speeds, 1) * SCROLL_SCALE;
     } else if (endFrame < END_DRIVE) {
-      // road keeps moving while winner drives to line
       scrollX += winnerSpd * SCROLL_SCALE * (1 - easeOutCubic(endFrame / END_DRIVE) * 0.6);
     }
-    // road stops scrolling once winner has crossed
 
-    // ── car screen-x positions ────────────────────────────────────────────
+    // ── car screen-x (side view) ──────────────────────────────────────────
     const carX = new Array(N);
     if (endFrame < 0) {
-      // normal race: leader fixed at LEAD_X_FRAC, others trail left
       const leadPos = Math.max(...state.positions);
       for (let i = 0; i < N; i++) {
         carX[i] = W * LEAD_X_FRAC
@@ -138,18 +134,15 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
       const eased  = easeOutCubic(driveT);
       for (let i = 0; i < N; i++) {
         if (i === sim.winner) {
-          // winner drives to finish line + one car-width past it
           carX[i] = endStartX[i] + eased * (FINISH_X + CAR_W * 0.55 - endStartX[i]);
         } else {
-          // losers coast to a stop (drift slightly left then freeze)
           const loserT = Math.min(1, endFrame / (END_DRIVE * 0.7));
           carX[i] = endStartX[i] - easeOutCubic(loserT) * W * 0.08;
         }
       }
     }
 
-    // ── finish-line x position ────────────────────────────────────────────
-    // slides in from right during last 18% of physics; fixed once ending starts
+    // ── finish line x ─────────────────────────────────────────────────────
     let finishLineX;
     const physPct = physTick / sim.history.length;
     if (endFrame >= 0) {
@@ -158,19 +151,25 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
       const slideT = (physPct - 0.82) / 0.18;
       finishLineX = W + 60 - easeOutCubic(slideT) * (W + 60 - FINISH_X);
     } else {
-      finishLineX = W + 60; // off screen
+      finishLineX = W + 60;
     }
 
-    // ── celebration state ─────────────────────────────────────────────────
+    // ── celebration ───────────────────────────────────────────────────────
     const celebFrame = (endFrame >= END_DRIVE) ? (endFrame - END_DRIVE) : -1;
     const flashOn    = celebFrame >= 0 && celebFrame < END_CELEBRATE && celebFrame % 10 < 5;
 
     // ── draw ─────────────────────────────────────────────────────────────
-    drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
-              sim, state, scenery, scrollX, physTick, endFrame,
-              carX, finishLineX, sim.winner, flashOn, celebFrame, confetti);
+    const vMode = getViewMode();
+    if (vMode === 'front') {
+      drawFrameFront(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
+                     sim, state, scenery, scrollX, physTick, endFrame,
+                     sim.winner, flashOn, celebFrame, confetti);
+    } else {
+      drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
+                sim, state, scenery, scrollX, physTick, endFrame,
+                carX, finishLineX, sim.winner, flashOn, celebFrame, confetti);
+    }
 
-    // ── completion ────────────────────────────────────────────────────────
     if (endFrame >= END_TOTAL) {
       onComplete?.();
       return;
@@ -185,7 +184,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick } = {}) {
 // ─── easing ──────────────────────────────────────────────────────────────────
 function easeOutCubic(t) { return 1 - Math.pow(1 - Math.min(1, t), 3); }
 
-// ─── scenery generation ───────────────────────────────────────────────────────
+// ─── scenery ─────────────────────────────────────────────────────────────────
 function buildScenery(rng, W) {
   const buildings = [];
   let bx = 0;
@@ -216,7 +215,7 @@ function buildScenery(rng, W) {
   return { buildings, trees, cracks, potholes };
 }
 
-// ─── frame ───────────────────────────────────────────────────────────────────
+// ─── SIDE VIEW frame ─────────────────────────────────────────────────────────
 function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                    sim, state, scenery, scrollX, physTick, endFrame,
                    carX, finishLineX, winnerIdx, flashOn, celebFrame, confetti) {
@@ -228,10 +227,8 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
   drawProgressHud(ctx, W, ROAD_Y, state.positions, N);
   drawFinishLine(ctx, H, ROAD_Y, finishLineX, celebFrame >= 0);
 
-  // draw cars back-to-front (higher index = behind)
   for (let i = N - 1; i >= 0; i--) {
     const baseY  = ROAD_Y + (i + 0.54) * LANE_H;
-    // bumpy Russian road: vertical bounce scales with speed, stops during ending sequence
     const bounce = endFrame < 0
       ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.65
       : 0;
@@ -244,10 +241,53 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
              i === winnerIdx && flashOn);
   }
 
-  // celebration burst on top of winner's car
   if (celebFrame >= 0 && celebFrame < 50) {
     const winY = ROAD_Y + (winnerIdx + 0.54) * LANE_H;
     drawCelebration(ctx, carX[winnerIdx], winY, CAR_W, CAR_H, celebFrame, confetti);
+  }
+}
+
+// ─── FRONT VIEW frame ────────────────────────────────────────────────────────
+function drawFrameFront(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
+                        sim, state, scenery, scrollX, physTick, endFrame,
+                        winnerIdx, flashOn, celebFrame, confetti) {
+  ctx.clearRect(0, 0, W, H);
+
+  // Sky + trees — slow parallax in front view
+  drawSky(ctx, W, SKY_H, scrollX * 0.25, scenery.buildings);
+  drawTrees(ctx, W, SKY_H, TREE_H, scrollX * 0.25, scenery.trees);
+
+  // Perspective road
+  drawRoadFront(ctx, W, H, N, ROAD_Y);
+
+  // Progress HUD
+  drawProgressHud(ctx, W, ROAD_Y, state.positions, N);
+
+  // Cars — evenly spaced in lanes, front-on view
+  const laneW  = W / N;
+  const frontW = Math.min(laneW * 0.86, 185);
+  const frontH = frontW * 0.60;
+  const carBY  = H - H * 0.04;
+
+  for (let i = N - 1; i >= 0; i--) {
+    // slight horizontal wobble while racing
+    const wobble = endFrame < 0
+      ? Math.sin(physTick * 0.4 + i * 1.5) * Math.max(0, state.speeds[i] - 1.5) * 0.4
+      : 0;
+    const carCX  = laneW * (i + 0.5) + wobble;
+    const stopped = celebFrame >= 0 && i !== winnerIdx;
+    drawLadaFront(
+      ctx, carCX, carBY, frontW, frontH,
+      CAR_COLORS[i % CAR_COLORS.length],
+      stopped ? 0 : state.speeds[i],
+      state.hits[i],
+      i === winnerIdx && flashOn,
+    );
+  }
+
+  if (celebFrame >= 0 && celebFrame < 50) {
+    const winCX = laneW * (winnerIdx + 0.5);
+    drawCelebration(ctx, winCX, carBY, frontW, frontH, celebFrame, confetti);
   }
 }
 
@@ -328,7 +368,7 @@ function drawBirch(ctx, x, groundY, size) {
   ctx.fill();
 }
 
-// ─── road ────────────────────────────────────────────────────────────────────
+// ─── side-view road ───────────────────────────────────────────────────────────
 function drawRoad(ctx, W, H, N, roadY, laneH, scrollX, cracks, potholes) {
   ctx.fillStyle = '#1c1e22';
   ctx.fillRect(0, roadY, W, H - roadY);
@@ -371,23 +411,68 @@ function drawRoad(ctx, W, H, N, roadY, laneH, scrollX, cracks, potholes) {
   }
 }
 
+// ─── front-view perspective road ─────────────────────────────────────────────
+function drawRoadFront(ctx, W, H, N, roadY) {
+  const vpX = W / 2;
+  const vpY = roadY + (H - roadY) * 0.06; // vanishing point
+
+  // Road surface — perspective trapezoid with gradient
+  const grad = ctx.createLinearGradient(0, vpY, 0, H);
+  grad.addColorStop(0, '#28292e');
+  grad.addColorStop(0.5, '#1f2126');
+  grad.addColorStop(1, '#1c1e22');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(vpX, vpY);
+  ctx.lineTo(W * 1.6, H);
+  ctx.lineTo(-W * 0.6, H);
+  ctx.closePath();
+  ctx.fill();
+
+  // Subtle road surface bands (perspective-scaled)
+  for (let i = 0; i < 5; i++) {
+    const t  = (i + 1) / 6;
+    const bY = vpY + (H - vpY) * t;
+    const bW = (W * 1.6 + W * 0.6) * t;
+    ctx.fillStyle = `rgba(255,255,255,${0.008 + i * 0.003})`;
+    ctx.fillRect(vpX - bW / 2, bY, bW, (H - vpY) / 12);
+  }
+
+  // Lane dividers converging to vanishing point
+  for (let i = 0; i <= N; i++) {
+    const xFrac = i / N;
+    const bx    = W * xFrac;
+    const isBorder = i === 0 || i === N;
+    ctx.strokeStyle = isBorder ? '#8a8070' : '#c09030';
+    ctx.lineWidth   = isBorder ? 2.5 : 1.5;
+    ctx.setLineDash(isBorder ? [] : [18, 14]);
+    ctx.beginPath();
+    ctx.moveTo(vpX, vpY);
+    ctx.lineTo(bx, H);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Horizon haze
+  const haze = ctx.createLinearGradient(0, vpY - 4, 0, vpY + 14);
+  haze.addColorStop(0, 'rgba(84,94,110,0)');
+  haze.addColorStop(1, 'rgba(84,94,110,0.55)');
+  ctx.fillStyle = haze;
+  ctx.fillRect(0, vpY - 4, W, 18);
+}
+
 // ─── finish line ─────────────────────────────────────────────────────────────
 function drawFinishLine(ctx, H, roadY, x, glowing) {
-  if (x > H * 2) return; // off screen — H used as rough sentinel
-  const sq = 14;
-  const cols = 2;
+  if (x > H * 2) return;
+  const sq = 14, cols = 2;
   ctx.save();
-  if (glowing) {
-    ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur  = 20;
-  }
+  if (glowing) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 20; }
   for (let row = 0; roadY + row * sq < H; row++) {
     for (let col = 0; col < cols; col++) {
       ctx.fillStyle = (row + col) % 2 === 0 ? '#f4f0e8' : '#111';
       ctx.fillRect(x + col * sq, roadY + row * sq, sq, sq);
     }
   }
-  // pole
   ctx.fillStyle = glowing ? '#ffd700' : '#888';
   ctx.shadowBlur = glowing ? 10 : 0;
   ctx.fillRect(x - 3, roadY, 3, H - roadY);
@@ -407,23 +492,23 @@ function drawProgressHud(ctx, W, roadY, positions, N) {
 }
 
 // ─── celebration burst ────────────────────────────────────────────────────────
+// cy = wheel centre (side view) OR car bottom (front view).
+// carTopY is derived consistently from cy and CH in both cases.
 function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
   ctx.save();
-  // gold flash behind car — cy is wheel center, car top is cy - CH*0.78
-  const carTopY = cy - CH * 0.78;
+  const carTopY    = cy - CH * 0.78;
   const flashAlpha = celebFrame % 10 < 5 ? 0.28 : 0;
   if (flashAlpha > 0) {
     ctx.fillStyle = `rgba(255,215,40,${flashAlpha})`;
     ctx.fillRect(cx - CW / 2 - 8, carTopY - 6, CW + 16, CH + 12);
   }
 
-  // particle burst
   for (const p of particles) {
     const t     = Math.min(1, celebFrame / 45);
     const dist  = p.speed * celebFrame * 2.2;
     const grav  = 0.18 * celebFrame * celebFrame;
     const px    = cx + Math.cos(p.angle) * dist;
-    const py    = (carTopY + CH * 0.4) + Math.sin(p.angle) * dist + grav;
+    const py    = (carTopY + CH * 0.38) + Math.sin(p.angle) * dist + grav;
     const alpha = Math.max(0, 1 - t * 1.1);
     if (alpha <= 0) continue;
 
@@ -444,28 +529,26 @@ function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
   ctx.restore();
 }
 
-// ─── Lada 2107 silhouette ─────────────────────────────────────────────────────
-// Single continuous polygon tracing the exact car profile.
-// Normalized coords: (0,0) = top-left of bounding box, (1,1) = bottom-right.
-// cx = horizontal centre, cy = wheel-centre y (= TOP + 0.78 * CH).
+// ─── SIDE VIEW — Lada 2107 silhouette ────────────────────────────────────────
+// Single continuous polygon tracing the real profile.
+// Normalized coords: (0,0) = top-left bounding box, (1,1) = bottom-right.
+// cx = horizontal centre; cy = wheel-centre y = TOP + 0.78 * CH.
 // x=0 is REAR, x=1 is FRONT (car faces right).
 function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
-  const L   = cx - CW / 2;         // left (rear) edge of bounding box
-  const TOP = cy - CH * 0.78;      // top of bounding box
+  const L   = cx - CW / 2;
+  const TOP = cy - CH * 0.78;
 
-  // helpers: normalised → canvas
   const px = (nx) => L   + nx * CW;
   const py = (ny) => TOP + ny * CH;
 
-  // wheel geometry
   const WR  = CH * 0.22;
-  const rWX = px(0.18);   // rear wheel centre x
-  const fWX = px(0.78);   // front wheel centre x
-  const WY  = cy;         // wheel centre y
+  const rWX = px(0.18);
+  const fWX = px(0.78);
+  const WY  = cy;
 
   ctx.save();
 
-  // ── exhaust smoke (rear, near y=0.65) ────────────────────────────────────
+  // ── exhaust smoke ─────────────────────────────────────────────────────────
   if (speed > 0.8) {
     const n        = hit ? 5 : Math.min(5, Math.ceil(speed / 1.6));
     const sizeMult = hit ? 1.6 : (1 + speed * 0.08);
@@ -479,7 +562,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     }
   }
 
-  // ── speed lines (trailing off rear) ──────────────────────────────────────
+  // ── speed lines ──────────────────────────────────────────────────────────
   if (speed > 2.5 && !hit) {
     ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1.5;
     for (let i = 0; i < 5; i++) {
@@ -487,12 +570,12 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
       const lny = py(0.34 + i * 0.07);
       ctx.beginPath();
       ctx.moveTo(px(0) - len - 8, lny);
-      ctx.lineTo(px(0) - 8,       lny);
+      ctx.lineTo(px(0) - 8, lny);
       ctx.stroke();
     }
   }
 
-  // ── body polygon — single path tracing the Lada 2107 silhouette ──────────
+  // ── body polygon — Lada 2107 profile ─────────────────────────────────────
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(px(1.00), py(0.72)); // front bumper bottom
@@ -507,18 +590,13 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.lineTo(px(0.05), py(0.52)); // trunk top
   ctx.lineTo(px(0.00), py(0.58)); // rear bumper top
   ctx.lineTo(px(0.00), py(0.72)); // rear bumper bottom
-  ctx.closePath();                 // bottom line → front bumper bottom
+  ctx.closePath();                 // bottom → front bumper bottom
   ctx.fill();
-
-  // thin dark outline to read against any road colour
-  ctx.strokeStyle = shade(color, -0.38);
-  ctx.lineWidth   = 1;
-  ctx.stroke();
 
   // ── windows ──────────────────────────────────────────────────────────────
   const glassColor = 'rgba(18,35,65,0.90)';
 
-  // windshield — strip between A-pillar foot (0.60,0.50) and top (0.52,0.22)
+  // windshield — angled strip at A-pillar
   ctx.fillStyle = glassColor;
   ctx.beginPath();
   ctx.moveTo(px(0.600), py(0.500));
@@ -528,7 +606,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.closePath();
   ctx.fill();
 
-  // rear window — between C-pillar (0.18,0.25)→(0.12,0.50) with thin pillars
+  // rear window — C-pillar strip
   ctx.fillStyle = glassColor;
   ctx.beginPath();
   ctx.moveTo(px(0.188), py(0.258));
@@ -541,21 +619,18 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.fill();
 
   // side windows — two door panes between C and A pillars
-  // roof line interpolated between (0.25,0.20) and (0.52,0.22)
   const roofAtX = (nx) => 0.20 + (0.22 - 0.20) * Math.max(0, (nx - 0.25) / (0.52 - 0.25));
   const beltY   = 0.455;
-  const winRear = 0.278; // just past C-pillar
-  const winFrnt = 0.553; // just before A-pillar
-  const bpX     = winRear + (winFrnt - winRear) * 0.50; // B-pillar
+  const winRear = 0.278;
+  const winFrnt = 0.553;
+  const bpX     = winRear + (winFrnt - winRear) * 0.50;
 
   ctx.fillStyle = glassColor;
-  // rear door
   ctx.fillRect(
     px(winRear + 0.008), py(roofAtX(winRear) + 0.015),
     px(bpX - 0.010) - px(winRear + 0.008),
     py(beltY) - py(roofAtX(winRear) + 0.015)
   );
-  // front door
   ctx.fillRect(
     px(bpX + 0.010), py(roofAtX(bpX) + 0.008),
     px(winFrnt - 0.008) - px(bpX + 0.010),
@@ -570,30 +645,33 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     py(beltY) - py(roofAtX(bpX) + 0.008)
   );
 
-  // window glint
+  // glint
   ctx.strokeStyle = 'rgba(215,235,255,0.16)'; ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(px(winRear + 0.015), py(roofAtX(winRear) + 0.035));
   ctx.lineTo(px(bpX - 0.018),    py(roofAtX(bpX - 0.018) + 0.035));
   ctx.stroke();
 
-  // chrome beltline strip
+  // chrome beltline
   ctx.strokeStyle = 'rgba(195,188,168,0.50)'; ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(px(0.06), py(beltY));
   ctx.lineTo(px(0.62), py(beltY));
   ctx.stroke();
 
-  // ── taillights (rear, x≈0–0.05, y≈0.55–0.70) ────────────────────────────
-  ctx.fillStyle = hit ? '#ff4422' : '#cc1100';
+  // ── taillights — brighter red with glow ──────────────────────────────────
+  ctx.shadowColor = '#ff0000'; ctx.shadowBlur = hit ? 12 : 8;
+  ctx.fillStyle = hit ? '#ff5533' : '#ff1800';
   ctx.fillRect(px(0.010), py(0.55), px(0.050) - px(0.010), py(0.70) - py(0.55));
-  ctx.fillStyle = hit ? '#ff9977' : '#ff2200';
+  ctx.shadowBlur = hit ? 6 : 4;
+  ctx.fillStyle = hit ? '#ffaa88' : '#ff4400';
   ctx.fillRect(px(0.014), py(0.56), px(0.042) - px(0.014), py(0.62) - py(0.56));
-  // amber
+  ctx.shadowBlur = 0;
+  // amber indicator
   ctx.fillStyle = '#aa5500';
   ctx.fillRect(px(0.010), py(0.70), px(0.050) - px(0.010), py(0.73) - py(0.70));
 
-  // ── grille (front face, x≈0.965–1.0, y≈0.55–0.70) ───────────────────────
+  // ── grille ────────────────────────────────────────────────────────────────
   ctx.fillStyle = '#0c0d10';
   ctx.fillRect(px(0.965), py(0.55), px(1.00) - px(0.965), py(0.70) - py(0.55));
   ctx.strokeStyle = '#353d4a'; ctx.lineWidth = 1.5;
@@ -602,12 +680,12 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     ctx.beginPath(); ctx.moveTo(px(0.965), gy); ctx.lineTo(px(1.00), gy); ctx.stroke();
   }
 
-  // ── TON diamond headlight (front, near y=0.52) ────────────────────────────
+  // ── TON diamond headlight — larger, brighter ──────────────────────────────
   const hlCX = px(0.975);
   const hlCY = py(0.525);
-  const dlW  = CW * 0.036;
-  const dlH  = CH * 0.062;
-  ctx.shadowColor = '#00aaff'; ctx.shadowBlur = 18;
+  const dlW  = CW * 0.055;   // wider than before
+  const dlH  = CH * 0.092;   // taller than before
+  ctx.shadowColor = '#00aaff'; ctx.shadowBlur = 28;
   ctx.fillStyle   = '#70d8ff';
   ctx.beginPath();
   ctx.moveTo(hlCX,       hlCY - dlH);
@@ -615,7 +693,8 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.lineTo(hlCX,       hlCY + dlH);
   ctx.lineTo(hlCX - dlW, hlCY);
   ctx.closePath(); ctx.fill();
-  ctx.shadowBlur = 6; ctx.fillStyle = '#d8f4ff';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle  = '#d8f4ff';
   ctx.beginPath();
   ctx.moveTo(hlCX,             hlCY - dlH * 0.5);
   ctx.lineTo(hlCX + dlW * 0.5, hlCY);
@@ -624,7 +703,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.closePath(); ctx.fill();
   ctx.shadowBlur = 0;
 
-  // ── wheel arches — dark semicircle punched into body ─────────────────────
+  // ── wheel arches ──────────────────────────────────────────────────────────
   ctx.fillStyle = shade(color, -0.28);
   ctx.beginPath(); ctx.arc(rWX, WY, WR + 3, Math.PI, 0); ctx.fill();
   ctx.beginPath(); ctx.arc(fWX, WY, WR + 3, Math.PI, 0); ctx.fill();
@@ -653,6 +732,128 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.restore();
 }
 
+// ─── FRONT VIEW — Lada 2107 head-on ──────────────────────────────────────────
+// cx = horizontal centre, cy = bottom of car (ground level).
+// CW = car width, CH = car height in this projection.
+function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
+  const L = cx - CW / 2;
+  const T = cy - CH;
+
+  const px = (nx) => L + nx * CW;
+  const py = (ny) => T + ny * CH;
+
+  ctx.save();
+
+  // ── body proportions ──────────────────────────────────────────────────────
+  const bumperT  = 0.86; // top of bumper zone (bottom 14% = bumper)
+  const hoodT    = 0.36; // where cabin meets hood (top 36% = cabin)
+  const cabInset = 0.08; // cabin narrower than body on each side
+
+  // ── cabin (top section) ───────────────────────────────────────────────────
+  ctx.fillStyle = color;
+  ctx.fillRect(px(cabInset), py(0), CW * (1 - 2 * cabInset), py(hoodT) - py(0));
+
+  // ── main body / hood area ─────────────────────────────────────────────────
+  ctx.fillStyle = color;
+  ctx.fillRect(px(0), py(hoodT), CW, py(bumperT) - py(hoodT));
+
+  // slight body outline
+  ctx.strokeStyle = shade(color, -0.35); ctx.lineWidth = 1;
+  ctx.strokeRect(px(0), py(hoodT), CW, py(bumperT) - py(hoodT));
+  ctx.strokeRect(px(cabInset), py(0), CW * (1 - 2 * cabInset), py(hoodT) - py(0));
+
+  // ── bumper ────────────────────────────────────────────────────────────────
+  ctx.fillStyle = shade(color, -0.32);
+  ctx.fillRect(px(0), py(bumperT), CW, py(1.0) - py(bumperT));
+  // chrome strip
+  const bmpH = py(1.0) - py(bumperT);
+  ctx.fillStyle = 'rgba(200,192,178,0.65)';
+  ctx.fillRect(px(0), py(bumperT) + bmpH * 0.32, CW, bmpH * 0.22);
+  // spoiler lip
+  ctx.fillStyle = '#181818';
+  ctx.fillRect(px(0.04), py(1.0) - 2, CW * 0.92, 3);
+
+  // ── front wheels (partially visible at lower corners) ─────────────────────
+  const wheelR = CH * 0.12;
+  ctx.fillStyle = '#111116';
+  ctx.beginPath(); ctx.arc(px(0.09), py(1.0), wheelR, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.arc(px(0.91), py(1.0), wheelR, Math.PI, 0); ctx.fill();
+  ctx.strokeStyle = '#555550'; ctx.lineWidth = wheelR * 0.25;
+  ctx.beginPath(); ctx.arc(px(0.09), py(1.0), wheelR * 0.62, Math.PI, 0); ctx.stroke();
+  ctx.beginPath(); ctx.arc(px(0.91), py(1.0), wheelR * 0.62, Math.PI, 0); ctx.stroke();
+
+  // ── headlight housings ────────────────────────────────────────────────────
+  const hlYt = 0.40, hlYb = 0.82;
+  const lHX0 = 0.03, lHX1 = 0.25;
+  const rHX0 = 0.75, rHX1 = 0.97;
+  const hlH  = py(hlYb) - py(hlYt);
+  const lHW  = px(lHX1) - px(lHX0);
+  const rHW  = px(rHX1) - px(rHX0);
+
+  ctx.fillStyle = '#14141c';
+  ctx.fillRect(px(lHX0), py(hlYt), lHW, hlH);
+  ctx.fillRect(px(rHX0), py(hlYt), rHW, hlH);
+
+  // ── grille ────────────────────────────────────────────────────────────────
+  const gX0 = 0.27, gX1 = 0.73, gY0 = 0.42, gY1 = 0.84;
+  const gH  = py(gY1) - py(gY0);
+  const gW  = px(gX1) - px(gX0);
+  ctx.fillStyle = '#0c0d10';
+  ctx.fillRect(px(gX0), py(gY0), gW, gH);
+  ctx.strokeStyle = '#353d4a'; ctx.lineWidth = 1.5;
+  for (let i = 1; i < 5; i++) {
+    const gy = py(gY0) + gH * (i / 5);
+    ctx.beginPath(); ctx.moveTo(px(gX0), gy); ctx.lineTo(px(gX1), gy); ctx.stroke();
+  }
+  // vertical center divide
+  ctx.beginPath(); ctx.moveTo(cx, py(gY0)); ctx.lineTo(cx, py(gY1)); ctx.stroke();
+
+  // ── TON diamond headlights (one per housing) ──────────────────────────────
+  const drawDiamond = (dcx, dcy, dW, dH) => {
+    ctx.shadowColor = '#00aaff'; ctx.shadowBlur = 26;
+    ctx.fillStyle   = '#70d8ff';
+    ctx.beginPath();
+    ctx.moveTo(dcx,      dcy - dH);
+    ctx.lineTo(dcx + dW, dcy);
+    ctx.lineTo(dcx,      dcy + dH);
+    ctx.lineTo(dcx - dW, dcy);
+    ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 9; ctx.fillStyle = '#d8f4ff';
+    ctx.beginPath();
+    ctx.moveTo(dcx,          dcy - dH * 0.5);
+    ctx.lineTo(dcx + dW * 0.5, dcy);
+    ctx.lineTo(dcx,          dcy + dH * 0.5);
+    ctx.lineTo(dcx - dW * 0.5, dcy);
+    ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 0;
+  };
+
+  const dW = lHW * 0.50, dH = hlH * 0.44;
+  drawDiamond(px(lHX0) + lHW / 2, py(hlYt) + hlH / 2, dW, dH);
+  drawDiamond(px(rHX0) + rHW / 2, py(hlYt) + hlH / 2, dW, dH);
+
+  // ── windshield ────────────────────────────────────────────────────────────
+  const wsX0 = cabInset + 0.06;
+  const wsX1 = 1 - cabInset - 0.06;
+  ctx.fillStyle = 'rgba(18,35,65,0.90)';
+  ctx.fillRect(px(wsX0), py(0.05), px(wsX1) - px(wsX0), py(hoodT - 0.05) - py(0.05));
+  // glint
+  ctx.strokeStyle = 'rgba(215,235,255,0.18)'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(px(wsX0 + 0.04), py(0.09));
+  ctx.lineTo(px(wsX1 - 0.04), py(0.09));
+  ctx.stroke();
+
+  // ── winner flash ──────────────────────────────────────────────────────────
+  if (flashOn) {
+    ctx.fillStyle = 'rgba(255,215,40,0.28)';
+    ctx.fillRect(L - 6, T - 6, CW + 12, CH + 12);
+  }
+
+  ctx.restore();
+}
+
+// ─── wheel ───────────────────────────────────────────────────────────────────
 function drawWheel(ctx, cx, cy, r) {
   ctx.fillStyle = '#111116';
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
