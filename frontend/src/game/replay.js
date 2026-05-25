@@ -265,8 +265,8 @@ function drawFrameFront(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_
 
   // Cars — evenly spaced in lanes, front-on view
   const laneW  = W / N;
-  const frontW = Math.min(laneW * 0.86, 185);
-  const frontH = frontW * 0.60;
+  const frontW = Math.min(laneW * 0.96, 210);
+  const frontH = frontW * 0.40;
   const carBY  = H - H * 0.04;
 
   for (let i = N - 1; i >= 0; i--) {
