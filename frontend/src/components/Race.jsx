@@ -191,9 +191,11 @@ export default function Race() {
         {race.state !== 'settled' && race.state !== 'active' && (
           <PhaseOverlay race={race} address={address} onRefund={handleTimeoutRefund} />
         )}
-      </div>
-      <div style={{ textAlign: 'center', marginTop: 8 }}>
-        <button className="btn btn--ghost btn--small" onClick={toggleView}>
+        <button
+          className="btn btn--ghost btn--small"
+          onClick={toggleView}
+          style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, opacity: 0.85 }}
+        >
           {viewMode === 'side' ? 'Front View' : 'Side View'}
         </button>
       </div>
