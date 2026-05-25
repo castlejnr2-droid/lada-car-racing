@@ -4,13 +4,18 @@
  * Side view:  camera beside the track, road scrolls right→left.
  * Front view: camera AT the finish line looking back at approaching cars.
  *             Cars start tiny at the vanishing point and grow as they near.
- *             Soviet brutalist buildings line both sides of the perspective road.
+ *             When a car crosses the finish banner it zooms off the bottom.
  *
- * Ending sequence (both views):
- *   1. Finish-line banner slides in (side) / winner grows (front) during last 18%.
+ * Ending sequence (side view):
+ *   1. Finish-line banner slides in during last 18%.
  *   2. Winner drives to finish (55 frames).
  *   3. Celebration burst + flash (50 frames).
  *   4. Hold (20 frames), then onComplete().
+ *
+ * Ending sequence (front view):
+ *   1. Cars grow from vanishing point as they approach.
+ *   2. Each car crosses the checkered banner (at ~80% track) and zooms off bottom.
+ *   3. 1.5 s after winner zooms off, onComplete().
  */
 import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
@@ -29,6 +34,11 @@ const END_TOTAL     = END_DRIVE + END_CELEBRATE + END_HOLD;
 
 // Perspective strength for front view (higher = more aggressive vanishing)
 const PERSP_K = 5;
+
+// Front-view finish line
+const FINISH_POS_FRAC  = 0.80;   // normalised track position where car hits banner
+const ZOOM_FRAMES      = 24;     // frames to zoom off the bottom
+const FRONT_HOLD       = 90;     // frames (~1.5 s) to wait after winner zooms off
 
 const CAR_COLORS = [
   '#e8e0d0', // off-white
@@ -85,6 +95,11 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   let rafId      = null;
 
   const endStartX = new Array(N).fill(0);
+
+  // ── front-view finish state ─────────────────────────────────────────────
+  const frontZoomStart   = new Array(N).fill(-1);  // frame when car's zoom started
+  let frontWinnerZoomDone = -1;
+  let frontCompleteFired  = false;
 
   function loop() {
     if (cancelled) return;
@@ -155,18 +170,52 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     const celebFrame = (endFrame >= END_DRIVE) ? (endFrame - END_DRIVE) : -1;
     const flashOn    = celebFrame >= 0 && celebFrame < END_CELEBRATE && celebFrame % 10 < 5;
 
+    // ── front-view: track finish line crossings + completion ─────────────
+    if (getViewMode() === 'front') {
+      for (let i = 0; i < N; i++) {
+        if (frontZoomStart[i] < 0) {
+          // Trigger zoom when car reaches FINISH_POS_FRAC of track
+          if (state.positions[i] / TRACK_LENGTH >= FINISH_POS_FRAC) {
+            frontZoomStart[i] = frameCount;
+          }
+          // Fallback: once winner has been zooming for ZOOM_FRAMES, trigger
+          // remaining cars staggered so they follow the winner off screen
+          else if (frontZoomStart[sim.winner] >= 0) {
+            const lag = 10 + ((i + N - sim.winner) % N) * 8;
+            if (frameCount >= frontZoomStart[sim.winner] + lag) {
+              frontZoomStart[i] = frameCount;
+            }
+          }
+        }
+      }
+      // Mark when winner zoom animation is complete
+      if (frontWinnerZoomDone < 0 && frontZoomStart[sim.winner] >= 0 &&
+          frameCount - frontZoomStart[sim.winner] >= ZOOM_FRAMES) {
+        frontWinnerZoomDone = frameCount;
+      }
+      // Fire onComplete 1.5 s after winner zoomed off
+      if (!frontCompleteFired && frontWinnerZoomDone >= 0 &&
+          frameCount - frontWinnerZoomDone >= FRONT_HOLD) {
+        frontCompleteFired = true;
+        onComplete?.();
+        return;
+      }
+    }
+
     // ── draw ─────────────────────────────────────────────────────────────
     if (getViewMode() === 'front') {
       drawFrameFront(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                      sim, state, scenery, physTick, endFrame,
-                     sim.winner, flashOn, celebFrame, confetti);
+                     sim.winner, flashOn, celebFrame, confetti,
+                     frontZoomStart, frameCount);
     } else {
       drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                 sim, state, scenery, scrollX, physTick, endFrame,
                 carX, finishLineX, sim.winner, flashOn, celebFrame, confetti);
     }
 
-    if (endFrame >= END_TOTAL) { onComplete?.(); return; }
+    // Side-view completion (front view handles its own above)
+    if (getViewMode() !== 'front' && endFrame >= END_TOTAL) { onComplete?.(); return; }
     rafId = requestAnimationFrame(loop);
   }
 
@@ -233,90 +282,99 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
 }
 
 // ─── FRONT VIEW frame ────────────────────────────────────────────────────────
-// Camera is AT the finish line looking back at the approaching cars.
-// Cars start tiny at the vanishing point and grow as they near the camera.
+// Camera AT the finish line. Cars approach from vanishing point.
+// Each car zooms off the bottom when it crosses the checkered banner.
 function drawFrameFront(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                         sim, state, scenery, physTick, endFrame,
-                        winnerIdx, flashOn, celebFrame, confetti) {
+                        winnerIdx, flashOn, celebFrame, confetti,
+                        frontZoomStart, frameCount) {
   ctx.clearRect(0, 0, W, H);
 
   // Static Soviet sky + tree strip
   drawSky(ctx, W, SKY_H, 0, scenery.buildings);
   drawTrees(ctx, W, SKY_H, TREE_H, 0, scenery.trees);
 
-  // Perspective road + brutalist cityscape on both sides
-  const VP_Y     = ROAD_Y + (H - ROAD_Y) * 0.04;  // vanishing point y
-  const ROAD_HW  = W * 0.30;                        // road half-width at screen bottom
-  drawRoadFront(ctx, W, H, N, ROAD_Y, VP_Y, ROAD_HW);
+  // Perspective road geometry
+  const VP_Y    = ROAD_Y + (H - ROAD_Y) * 0.04;
+  const ROAD_HW = W * 0.30;
+
+  // Banner y: where cars are when position = FINISH_POS_FRAC of track
+  const bannerT  = FINISH_POS_FRAC;
+  const bannerPF = bannerT / (bannerT + (1 - bannerT) * PERSP_K);
+  const bannerY  = VP_Y + (H - VP_Y) * bannerPF;
+  const bannerH  = Math.max(14, H * 0.038);
+
+  // Road + cityscape + banner (drawn before cars)
+  drawRoadFront(ctx, W, H, N, ROAD_Y, VP_Y, ROAD_HW, bannerY, bannerH);
 
   // Progress HUD
   drawProgressHud(ctx, W, ROAD_Y, state.positions, N);
 
-  // ── Perspective-correct car placement ────────────────────────────────────
-  // perspF(pos): 0 = at vanishing point, 1 = at camera
-  //   Uses perspective division: small near horizon, grows quickly when close.
+  // ── perspF: position → 0..1 scale factor ─────────────────────────────────
   const perspF = (pos) => {
     const t = Math.min(0.998, Math.max(0, pos / TRACK_LENGTH));
     return t / (t + (1 - t) * PERSP_K);
   };
 
-  // During ending sequence, animate winner driving toward camera
-  const winnerBasePF = perspF(state.positions[winnerIdx]);
-  let   winnerPF     = winnerBasePF;
-  if (endFrame >= 0) {
-    const driveT = Math.min(1, endFrame / END_DRIVE);
-    winnerPF = winnerBasePF + easeOutCubic(driveT) * (0.91 - winnerBasePF);
-  }
-
-  // Max car width when fully at camera (perspF=1)
   const MAX_CAR_W = Math.min(W * 0.58, 240);
 
-  // Sort back-to-front so closer cars render on top
-  const order = Array.from({ length: N }, (_, i) => i)
-    .sort((a, b) => {
-      const pfA = a === winnerIdx ? winnerPF : perspF(state.positions[a]);
-      const pfB = b === winnerIdx ? winnerPF : perspF(state.positions[b]);
-      return pfA - pfB;
-    });
+  // Sort back-to-front — cars that started zooming go last (closest/biggest)
+  const order = Array.from({ length: N }, (_, i) => i).sort((a, b) => {
+    const pfA = frontZoomStart[a] >= 0 ? 1 + (frameCount - frontZoomStart[a]) / ZOOM_FRAMES
+                                        : perspF(state.positions[a]);
+    const pfB = frontZoomStart[b] >= 0 ? 1 + (frameCount - frontZoomStart[b]) / ZOOM_FRAMES
+                                        : perspF(state.positions[b]);
+    return pfA - pfB;
+  });
 
   for (const i of order) {
-    const pf   = i === winnerIdx ? winnerPF : perspF(state.positions[i]);
-    if (pf < 0.01) continue;  // too far, skip
+    let pf    = perspF(state.positions[i]);
+    let carW  = MAX_CAR_W * pf;
+    let carH  = carW * 0.40;
 
-    const carW = MAX_CAR_W * pf;
-    const carH = carW * 0.40;
+    const laneCenter = (i + 0.5) / N;
+    let carCX = W / 2 + (laneCenter - 0.5) * ROAD_HW * 2 * pf;
+    let carBY = VP_Y + (H - VP_Y) * pf;
 
-    // Horizontal: spread into lane as car gets closer
-    const laneCenter = (i + 0.5) / N;           // 0..1 across road width
-    const carCX = W / 2 + (laneCenter - 0.5) * ROAD_HW * 2 * pf;
+    if (frontZoomStart[i] >= 0) {
+      // ── Zoom-off animation ───────────────────────────────────────────────
+      const zoomT  = Math.min(1, (frameCount - frontZoomStart[i]) / ZOOM_FRAMES);
+      const scale  = 1 + easeOutCubic(zoomT) * 5.5;  // 1x → 6.5x
 
-    // Vertical: car bottom sits on road surface at this depth
-    const carBY = VP_Y + (H - VP_Y) * pf;
+      // Base size at banner
+      const baseW = MAX_CAR_W * bannerPF;
+      const baseH = baseW * 0.40;
+      const baseCX = W / 2 + (laneCenter - 0.5) * ROAD_HW * 2 * bannerPF;
 
-    // Speed wobble (horizontal) while racing
-    const wobble = endFrame < 0
-      ? Math.sin(physTick * 0.38 + i * 1.7) * Math.max(0, state.speeds[i] - 1.5) * 0.35 * pf
-      : 0;
+      carW  = baseW  * scale;
+      carH  = baseH  * scale;
+      carCX = baseCX;  // stay centred in lane
+      // Shoot off bottom: top of car moves from bannerY to off-screen
+      carBY = bannerY + easeOutCubic(zoomT) * (H + carH - bannerY);
 
-    const stopped = celebFrame >= 0 && i !== winnerIdx;
+      // Skip once fully off screen
+      if (carBY - carH > H + 10) continue;
+    } else {
+      if (pf < 0.015) continue;  // too tiny to bother
+
+      // Speed wobble while racing
+      const wobble = endFrame < 0
+        ? Math.sin(physTick * 0.38 + i * 1.7) * Math.max(0, state.speeds[i] - 1.5) * 0.35 * pf
+        : 0;
+      carCX += wobble;
+    }
+
     drawLadaFront(
-      ctx, carCX + wobble, carBY, carW, carH,
+      ctx, carCX, carBY, carW, carH,
       CAR_COLORS[i % CAR_COLORS.length],
-      stopped ? 0 : state.speeds[i],
+      frontZoomStart[i] >= 0 ? 0 : state.speeds[i],
       state.hits[i],
       i === winnerIdx && flashOn,
     );
   }
 
-  // Celebration burst over winner
-  if (celebFrame >= 0 && celebFrame < 50) {
-    const winCarW = MAX_CAR_W * winnerPF;
-    const winCarH = winCarW * 0.40;
-    const winLane  = (winnerIdx + 0.5) / N;
-    const winCX    = W / 2 + (winLane - 0.5) * ROAD_HW * 2 * winnerPF;
-    const winBY    = VP_Y + (H - VP_Y) * winnerPF;
-    drawCelebration(ctx, winCX, winBY, winCarW, winCarH, celebFrame, confetti);
-  }
+  // Re-draw banner ON TOP of cars (so it stays visible as cars zoom under it)
+  drawFinishBanner(ctx, W, bannerY, bannerH, /* glowing */ frontZoomStart[winnerIdx] >= 0);
 }
 
 // ─── sky ─────────────────────────────────────────────────────────────────────
@@ -433,56 +491,42 @@ function drawRoad(ctx, W, H, N, roadY, laneH, scrollX, cracks, potholes) {
 }
 
 // ─── front-view perspective road + Soviet cityscape ──────────────────────────
-// VP_Y     = vanishing point y
-// ROAD_HW  = road half-width at screen bottom
-function drawRoadFront(ctx, W, H, N, roadY, VP_Y, ROAD_HW) {
-  const vpX  = W / 2;
+function drawRoadFront(ctx, W, H, N, roadY, VP_Y, ROAD_HW, bannerY, bannerH) {
+  const vpX   = W / 2;
   const roadH = H - VP_Y;
 
   // ── Soviet brutalist buildings — back to front ──────────────────────────
-  // 12 depth slabs; at each depth t the road occupies the central strip,
-  // buildings fill the strips on each side from road edge to screen edge.
   const SLABS = 12;
   for (let si = 0; si < SLABS; si++) {
-    const t = (si + 1) / SLABS;          // 0.08..1.0 (back to front)
-    const sy    = VP_Y + roadH * t;       // road surface y at this depth
-    const roadL = vpX - ROAD_HW * t;      // road left edge
-    const roadR = vpX + ROAD_HW * t;      // road right edge
-    const leftW  = Math.max(0, roadL);    // building strip width on left
-    const rightW = Math.max(0, W - roadR);// building strip width on right
+    const t = (si + 1) / SLABS;
+    const sy    = VP_Y + roadH * t;
+    const roadL = vpX - ROAD_HW * t;
+    const roadR = vpX + ROAD_HW * t;
+    const leftW  = Math.max(0, roadL);
+    const rightW = Math.max(0, W - roadR);
 
-    // Vary building heights per slab for a realistic skyline
-    const hSeed = ((si * 47 + 11) % 100) / 100;  // 0..1 deterministic
+    const hSeed = ((si * 47 + 11) % 100) / 100;
     const bHFrac = 0.50 + hSeed * 0.65;
     const bH = t * roadH * bHFrac * 1.2;
     const bTopY = sy - bH;
 
-    // Colour gets slightly lighter/warmer closer to camera
     const v = Math.round(0x18 + si * 1.2);
     const col = `rgb(${v},${v+3},${v+5})`;
 
-    // ── left building ──────────────────────────────────────────────────
     if (leftW > 1) {
       ctx.fillStyle = col;
       ctx.fillRect(0, bTopY, leftW, bH);
-
-      // Vertical window columns
       if (t > 0.18 && bH > 6) {
-        const wW  = Math.max(1, t * 5.5);
-        const wH  = Math.max(1, t * 3.5);
-        const spX = Math.max(wW + 2, t * 11);
-        const spY = Math.max(wH + 2, t * 10);
+        const wW = Math.max(1, t * 5.5), wH = Math.max(1, t * 3.5);
+        const spX = Math.max(wW + 2, t * 11), spY = Math.max(wH + 2, t * 10);
         ctx.fillStyle = `rgba(215,165,55,${0.12 + t * 0.28})`;
         for (let wx = 3; wx + wW < leftW; wx += spX) {
           for (let wy = bTopY + spY * 0.5; wy + wH < sy - 2; wy += spY) {
-            const seed = Math.floor((wx * 7 + wy * 13 + si * 31)) % 5;
-            if (seed === 0) continue;
+            if (Math.floor((wx * 7 + wy * 13 + si * 31)) % 5 === 0) continue;
             ctx.fillRect(wx, wy, wW, wH);
           }
         }
       }
-
-      // Roofline detail (TV antenna / vent silhouettes) on closer buildings
       if (t > 0.55 && leftW > 18) {
         ctx.fillStyle = shade(col, -0.15);
         ctx.fillRect(leftW * 0.3, bTopY - t * 6, t * 4, t * 6);
@@ -490,21 +534,16 @@ function drawRoadFront(ctx, W, H, N, roadY, VP_Y, ROAD_HW) {
       }
     }
 
-    // ── right building ─────────────────────────────────────────────────
     if (rightW > 1) {
       ctx.fillStyle = col;
       ctx.fillRect(roadR, bTopY, rightW, bH);
-
       if (t > 0.18 && bH > 6) {
-        const wW  = Math.max(1, t * 5.5);
-        const wH  = Math.max(1, t * 3.5);
-        const spX = Math.max(wW + 2, t * 11);
-        const spY = Math.max(wH + 2, t * 10);
+        const wW = Math.max(1, t * 5.5), wH = Math.max(1, t * 3.5);
+        const spX = Math.max(wW + 2, t * 11), spY = Math.max(wH + 2, t * 10);
         ctx.fillStyle = `rgba(215,165,55,${0.12 + t * 0.28})`;
         for (let wx = roadR + 3; wx + wW < W; wx += spX) {
           for (let wy = bTopY + spY * 0.5; wy + wH < sy - 2; wy += spY) {
-            const seed = Math.floor((wx * 7 + wy * 13 + si * 31)) % 5;
-            if (seed === 0) continue;
+            if (Math.floor((wx * 7 + wy * 13 + si * 31)) % 5 === 0) continue;
             ctx.fillRect(wx, wy, wW, wH);
           }
         }
@@ -530,7 +569,7 @@ function drawRoadFront(ctx, W, H, N, roadY, VP_Y, ROAD_HW) {
   ctx.closePath();
   ctx.fill();
 
-  // Road surface depth bands
+  // Road depth bands
   for (let i = 1; i < 6; i++) {
     const t = i / 6;
     const bandY = VP_Y + roadH * t;
@@ -539,7 +578,7 @@ function drawRoadFront(ctx, W, H, N, roadY, VP_Y, ROAD_HW) {
     ctx.fillRect(vpX - bw / 2, bandY - 1, bw, 2);
   }
 
-  // ── lane dividers converging to VP ────────────────────────────────────────
+  // Lane dividers converging to VP
   for (let i = 0; i <= N; i++) {
     const bx = vpX + (i / N - 0.5) * ROAD_HW * 2;
     const isBorder = i === 0 || i === N;
@@ -550,15 +589,60 @@ function drawRoadFront(ctx, W, H, N, roadY, VP_Y, ROAD_HW) {
   }
   ctx.setLineDash([]);
 
-  // ── horizon haze ──────────────────────────────────────────────────────────
+  // Horizon haze
   const haze = ctx.createLinearGradient(0, VP_Y - 4, 0, VP_Y + 16);
   haze.addColorStop(0, 'rgba(84,94,110,0)');
   haze.addColorStop(1, 'rgba(84,94,110,0.60)');
   ctx.fillStyle = haze;
   ctx.fillRect(0, VP_Y - 4, W, 20);
+
+  // ── Checkered finish banner (drawn on road before cars) ───────────────────
+  // Re-drawn again AFTER cars to keep it visible — see drawFrameFront.
+  drawFinishBanner(ctx, W, bannerY, bannerH, false);
 }
 
-// ─── finish line ─────────────────────────────────────────────────────────────
+// ─── checkered finish banner (horizontal, full-width) ────────────────────────
+function drawFinishBanner(ctx, W, bannerY, bannerH, glowing) {
+  ctx.save();
+
+  // Dark backing strip
+  ctx.fillStyle = 'rgba(10,10,14,0.72)';
+  ctx.fillRect(0, bannerY - bannerH * 0.4, W, bannerH * 1.6);
+
+  // Checkered squares
+  const sqW = Math.max(4, bannerH * 0.85);
+  const cols = Math.ceil(W / sqW) + 1;
+  for (let c = 0; c < cols; c++) {
+    for (let row = 0; row < 2; row++) {
+      ctx.fillStyle = (c + row) % 2 === 0 ? '#f0ece0' : '#111116';
+      ctx.fillRect(c * sqW, bannerY - sqW * 0.5 + row * sqW * 0.5, sqW + 0.5, sqW * 0.5 + 0.5);
+    }
+  }
+
+  // Gold border lines
+  if (glowing) {
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 18;
+  }
+  ctx.strokeStyle = glowing ? '#ffd700' : '#888870';
+  ctx.lineWidth = glowing ? 2.5 : 1.5;
+  ctx.beginPath(); ctx.moveTo(0, bannerY - sqW * 0.5); ctx.lineTo(W, bannerY - sqW * 0.5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, bannerY + sqW * 0.5); ctx.lineTo(W, bannerY + sqW * 0.5); ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // "FINISH" label at centre
+  const fontSize = Math.max(9, bannerH * 1.0);
+  ctx.font = `bold ${fontSize}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (glowing) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 12; }
+  ctx.fillStyle = glowing ? '#ffd700' : '#d0c890';
+  ctx.fillText('FINISH', W / 2, bannerY);
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+}
+
+// ─── side-view finish line ────────────────────────────────────────────────────
 function drawFinishLine(ctx, H, roadY, x, glowing) {
   if (x > H * 2) return;
   const sq = 14, cols = 2;
@@ -686,7 +770,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.strokeStyle = 'rgba(195,188,168,0.50)'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(px(0.06),py(beltY)); ctx.lineTo(px(0.62),py(beltY)); ctx.stroke();
 
-  // taillights (rear = left, x≈0) — shadow cleared after to avoid front bleed
+  // taillights
   ctx.shadowColor = '#ff0000'; ctx.shadowBlur = hit ? 12 : 8;
   ctx.fillStyle = hit ? '#ff5533' : '#ff1800';
   ctx.fillRect(px(0.010), py(0.55), px(0.050)-px(0.010), py(0.70)-py(0.55));
@@ -697,7 +781,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.fillStyle = '#aa5500';
   ctx.fillRect(px(0.010), py(0.70), px(0.050)-px(0.010), py(0.73)-py(0.70));
 
-  // grille + headlight (front = right, x≈1)
+  // grille + headlight
   ctx.fillStyle = '#0c0d10';
   ctx.fillRect(px(0.965), py(0.55), px(1.00)-px(0.965), py(0.70)-py(0.55));
   ctx.strokeStyle = '#353d4a'; ctx.lineWidth = 1.5;
@@ -738,7 +822,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
 // ─── FRONT VIEW — Lada 2107 head-on ──────────────────────────────────────────
 // cx = horizontal centre, cy = car bottom (ground). Scales by CW × CH.
 function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
-  if (CW < 3) return;  // skip if too tiny to render
+  if (CW < 3) return;
   const L = cx - CW / 2;
   const T = cy - CH;
   const px = (nx) => L + nx * CW;
@@ -750,18 +834,14 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const hoodT    = 0.36;
   const cabInset = 0.08;
 
-  // cabin
   ctx.fillStyle = color;
   ctx.fillRect(px(cabInset), py(0), CW*(1-2*cabInset), py(hoodT)-py(0));
-  // body
   ctx.fillStyle = color;
   ctx.fillRect(px(0), py(hoodT), CW, py(bumperT)-py(hoodT));
-  // outlines
   ctx.strokeStyle = shade(color, -0.35); ctx.lineWidth = Math.max(0.5, CW*0.007);
   ctx.strokeRect(px(0), py(hoodT), CW, py(bumperT)-py(hoodT));
   ctx.strokeRect(px(cabInset), py(0), CW*(1-2*cabInset), py(hoodT)-py(0));
 
-  // bumper
   ctx.fillStyle = shade(color, -0.32);
   ctx.fillRect(px(0), py(bumperT), CW, py(1.0)-py(bumperT));
   const bmpH = py(1.0)-py(bumperT);
@@ -770,7 +850,6 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.fillStyle = '#181818';
   ctx.fillRect(px(0.04), py(1.0)-Math.max(1,CW*0.02), CW*0.92, Math.max(1,CW*0.02));
 
-  // front wheels
   const wR = CH*0.12;
   ctx.fillStyle = '#111116';
   ctx.beginPath(); ctx.arc(px(0.09), py(1.0), wR, Math.PI, 0); ctx.fill();
@@ -779,7 +858,6 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.beginPath(); ctx.arc(px(0.09), py(1.0), wR*0.62, Math.PI, 0); ctx.stroke();
   ctx.beginPath(); ctx.arc(px(0.91), py(1.0), wR*0.62, Math.PI, 0); ctx.stroke();
 
-  // headlight housings
   const hlYt=0.40, hlYb=0.82, lHX0=0.03, lHX1=0.25, rHX0=0.75, rHX1=0.97;
   const hlH = py(hlYb)-py(hlYt);
   const lHW = px(lHX1)-px(lHX0);
@@ -788,7 +866,6 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.fillRect(px(lHX0), py(hlYt), lHW, hlH);
   ctx.fillRect(px(rHX0), py(hlYt), rHW, hlH);
 
-  // grille
   const gX0=0.27, gX1=0.73, gY0=0.42, gY1=0.84;
   const gH=py(gY1)-py(gY0), gW=px(gX1)-px(gX0);
   ctx.fillStyle = '#0c0d10';
@@ -800,7 +877,6 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   }
   ctx.beginPath(); ctx.moveTo(cx,py(gY0)); ctx.lineTo(cx,py(gY1)); ctx.stroke();
 
-  // TON diamond headlights — only render when car is big enough
   if (CW > 14) {
     const drawDiamond = (dcx, dcy, dW, dH) => {
       ctx.shadowColor='#00aaff'; ctx.shadowBlur=Math.min(26, CW*0.18);
@@ -815,7 +891,6 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     drawDiamond(px(rHX0)+rHW/2, py(hlYt)+hlH/2, dW, dH);
   }
 
-  // windshield
   if (CW > 8) {
     const wsX0=cabInset+0.06, wsX1=1-cabInset-0.06;
     ctx.fillStyle='rgba(18,35,65,0.90)';
