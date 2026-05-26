@@ -10,27 +10,22 @@ import {
 } from '@ton/core';
 
 /**
- * Hand-written facade around the LadaEscrow Tact contract.
- *
- * After `npm run build` Blueprint generates a fully typed wrapper at
- *   build/LadaEscrow/tact_LadaEscrow.ts
- * with `LadaEscrow.fromInit(...)` and message constructors. Tests and
- * the deploy script should prefer that wrapper. This file is a stable
- * shape the rest of the codebase can import while the contract evolves.
+ * Hand-written facade around the LadaEscrow Tact contract (v2 — owner payout).
  *
  * Op-codes here MUST match the `message(0x....)` declarations in
  * contracts/lada_escrow.tact.
  */
 
-// Op-codes — keep in sync with lada_escrow.tact
 export const OP = {
-  CreateRace:    0x6c726300,
-  CommitHash:    0x6c726301,
-  RevealSecret:  0x6c726302,
-  TimeoutRefund: 0x6c726303,
-  // Outgoing events the frontend / indexer listens for
-  WinnerDeclared: 0x6c7263f1,
-  RaceRefunded:   0x6c7263f2,
+  // Incoming
+  CreateRace:       0x6c726300,
+  Payout:           0x6c726304,
+  Refund:           0x6c726305,
+  WithdrawJettons:  0x6c726306,
+  SetJettonWallet:  0x6c726307,
+  // Outgoing events (indexed by backend)
+  WinnerDeclared:   0x6c7263f1,
+  RaceRefunded:     0x6c7263f2,
 } as const;
 
 export class LadaEscrow implements Contract {
@@ -70,57 +65,78 @@ export class LadaEscrow implements Contract {
     });
   }
 
-  // ── Send: commit hash(secret) ───────────────────────────────────
-  async sendCommitHash(
+  // ── Send: payout winner (owner only) ────────────────────────────
+  async sendPayout(
     provider: ContractProvider,
     via: Sender,
-    args: { raceId: bigint; commit: bigint; value?: bigint },
+    args: { raceId: bigint; winner: Address; seed: bigint; value?: bigint },
   ) {
     const body = beginCell()
-      .storeUint(OP.CommitHash, 32)
+      .storeUint(OP.Payout, 32)
       .storeUint(args.raceId, 64)
-      .storeUint(args.commit, 256)
+      .storeAddress(args.winner)
+      .storeUint(args.seed, 256)
       .endCell();
 
     await provider.internal(via, {
-      value: args.value ?? toNano('0.05'),
+      // settle sends one jetton transfer, so fund generously
+      value: args.value ?? toNano('0.1'),
       sendMode: SendMode.PAY_GAS_SEPARATELY,
       body,
     });
   }
 
-  // ── Send: reveal the secret ─────────────────────────────────────
-  async sendRevealSecret(
-    provider: ContractProvider,
-    via: Sender,
-    args: { raceId: bigint; secret: bigint; value?: bigint },
-  ) {
-    const body = beginCell()
-      .storeUint(OP.RevealSecret, 32)
-      .storeUint(args.raceId, 64)
-      .storeUint(args.secret, 256)
-      .endCell();
-
-    await provider.internal(via, {
-      value: args.value ?? toNano('0.2'), // settle path may send 2 jetton txs
-      sendMode: SendMode.PAY_GAS_SEPARATELY,
-      body,
-    });
-  }
-
-  // ── Send: trigger a refund after the deadline ───────────────────
-  async sendTimeoutRefund(
+  // ── Send: refund both players (owner only) ───────────────────────
+  async sendRefund(
     provider: ContractProvider,
     via: Sender,
     args: { raceId: bigint; value?: bigint },
   ) {
     const body = beginCell()
-      .storeUint(OP.TimeoutRefund, 32)
+      .storeUint(OP.Refund, 32)
       .storeUint(args.raceId, 64)
       .endCell();
 
     await provider.internal(via, {
-      value: args.value ?? toNano('0.2'),
+      // may send up to 2 jetton transfers
+      value: args.value ?? toNano('0.15'),
+      sendMode: SendMode.PAY_GAS_SEPARATELY,
+      body,
+    });
+  }
+
+  // ── Send: withdraw accumulated house fees (owner only) ───────────
+  async sendWithdrawJettons(
+    provider: ContractProvider,
+    via: Sender,
+    args: { amount: bigint; to: Address; value?: bigint },
+  ) {
+    const body = beginCell()
+      .storeUint(OP.WithdrawJettons, 32)
+      .storeCoins(args.amount)
+      .storeAddress(args.to)
+      .endCell();
+
+    await provider.internal(via, {
+      value: args.value ?? toNano('0.1'),
+      sendMode: SendMode.PAY_GAS_SEPARATELY,
+      body,
+    });
+  }
+
+  // ── Send: set jetton wallet (owner only, once after deploy) ──────
+  async sendSetJettonWallet(
+    provider: ContractProvider,
+    via: Sender,
+    args: { wallet: Address; value?: bigint },
+  ) {
+    const body = beginCell()
+      .storeUint(OP.SetJettonWallet, 32)
+      .storeAddress(args.wallet)
+      .endCell();
+
+    await provider.internal(via, {
+      value: args.value ?? toNano('0.05'),
       sendMode: SendMode.PAY_GAS_SEPARATELY,
       body,
     });
@@ -131,8 +147,6 @@ export class LadaEscrow implements Contract {
     const { stack } = await provider.get('raceOf', [
       { type: 'int', value: raceId },
     ]);
-    // The race struct is returned as a tuple — typed parsing is generated
-    // by Tact after `npm run build`. Return the raw stack for now.
     return stack;
   }
 
@@ -150,23 +164,6 @@ export class LadaEscrow implements Contract {
     const { stack } = await provider.get('jettonWalletAddress', []);
     return stack.readAddress();
   }
-}
-
-/**
- * Compute sha256(uint256 secret) → uint256 commit, the same way the contract
- * verifies it. Frontends and tests should use this helper so they agree.
- */
-export async function commitOf(secret: bigint): Promise<bigint> {
-  const { sha256 } = await import('@ton/crypto');
-  const buf = Buffer.alloc(32);
-  // big-endian 256-bit
-  let s = secret;
-  for (let i = 31; i >= 0; i--) {
-    buf[i] = Number(s & 0xffn);
-    s >>= 8n;
-  }
-  const digest = await sha256(buf);
-  return BigInt('0x' + digest.toString('hex'));
 }
 
 /**

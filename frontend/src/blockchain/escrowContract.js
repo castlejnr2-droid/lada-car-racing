@@ -1,70 +1,18 @@
 /**
- * Lada escrow contract wrapper.
+ * LadaEscrow v2 — op codes reference (for indexer / backend).
  *
- * Constructs the message bodies for the contract's three player-facing
- * operations (commit, reveal, timeout-refund) and sends them via TonConnect.
- *
- * Op-codes here MUST match `message(0x....)` declarations in
- *   contracts/contracts/lada_escrow.tact
- *
- * This is the ONLY frontend file outside /blockchain that knows the contract
- * message layout. The rest of the app calls these helpers.
+ * Players only sign ONE transaction: their jetton deposit (see jetton.js).
+ * All remaining contract ops (Payout, Refund) are called by the house wallet
+ * on the backend — no frontend interaction needed.
  */
-import { Address, beginCell, toNano } from '@ton/core';
-
-// Op-codes — keep in sync with the contract
 export const OP = {
-  CommitHash:    0x6c726301,
-  RevealSecret:  0x6c726302,
-  TimeoutRefund: 0x6c726303,
+  CreateRace:       0x6c726300,
+  Payout:           0x6c726304,
+  Refund:           0x6c726305,
+  WithdrawJettons:  0x6c726306,
+  SetJettonWallet:  0x6c726307,
+  WinnerDeclared:   0x6c7263f1,
+  RaceRefunded:     0x6c7263f2,
 };
 
-const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_CONTRACT_ADDRESS;
-
-function escrowAddress() {
-  if (!ESCROW_ADDRESS) throw new Error('VITE_ESCROW_CONTRACT_ADDRESS not configured');
-  return ESCROW_ADDRESS;
-}
-
-function tx({ to, amount, body }) {
-  return {
-    validUntil: Math.floor(Date.now() / 1000) + 360,
-    messages: [{
-      address: to,
-      amount: amount.toString(),
-      payload: body.toBoc().toString('base64'),
-    }],
-  };
-}
-
-// ───── Commit ─────────────────────────────────────────────────────────
-export function buildCommit(raceIdOnChain, commitBigInt) {
-  const body = beginCell()
-    .storeUint(OP.CommitHash, 32)
-    .storeUint(BigInt(raceIdOnChain), 64)
-    .storeUint(commitBigInt, 256)
-    .endCell();
-  return tx({ to: escrowAddress(), amount: toNano('0.05'), body });
-}
-
-// ───── Reveal ─────────────────────────────────────────────────────────
-export function buildReveal(raceIdOnChain, secretBigInt) {
-  const body = beginCell()
-    .storeUint(OP.RevealSecret, 32)
-    .storeUint(BigInt(raceIdOnChain), 64)
-    .storeUint(secretBigInt, 256)
-    .endCell();
-  // settle path may send 2 jetton transfers → fund more
-  return tx({ to: escrowAddress(), amount: toNano('0.2'), body });
-}
-
-// ───── Timeout refund ─────────────────────────────────────────────────
-export function buildTimeoutRefund(raceIdOnChain) {
-  const body = beginCell()
-    .storeUint(OP.TimeoutRefund, 32)
-    .storeUint(BigInt(raceIdOnChain), 64)
-    .endCell();
-  return tx({ to: escrowAddress(), amount: toNano('0.2'), body });
-}
-
-export { ESCROW_ADDRESS };
+export const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_CONTRACT_ADDRESS;

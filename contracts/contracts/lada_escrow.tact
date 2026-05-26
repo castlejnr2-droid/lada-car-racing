@@ -1,62 +1,50 @@
 // =====================================================================
-//  Lada Car Racing — escrow + commit-reveal RNG
+//  Lada Car Racing — simple owner-payout escrow (v2)
 // =====================================================================
 //
-//  Lifecycle of a race (2 players):
+//  Lifecycle:
 //
-//    AWAITING_DEPOSITS ──► AWAITING_COMMITS ──► AWAITING_REVEALS ──► SETTLED
-//          │                     │                     │
-//          └──── timeout ────────┴──── timeout ────────┴──► REFUNDED
+//    AWAITING_DEPOSITS ──► FUNDED ──► (settled or refunded by owner)
 //
-//   1. CreateRace            (owner) registers a new race with two players
-//   2. TokenNotification     each player sends Lada jettons; the contract's
-//                            jetton wallet forwards a TEP-74 notification
-//                            with the race ID in `forwardPayload`
-//   3. CommitHash            each player submits sha256(secret) before the
-//                            commit deadline
-//   4. RevealSecret          each player reveals their secret before the
-//                            reveal deadline; on the second reveal the
-//                            contract derives the winner, pays out 95/5,
-//                            and emits WinnerDeclared
-//   5. TimeoutRefund         if any phase deadline passes without progress,
-//                            anyone can trigger a full refund
+//   1. CreateRace       (owner) registers a new race with two players + stake
+//   2. TokenNotification each player sends Lada jettons; contract's jetton
+//                        wallet forwards a TEP-74 notification with the
+//                        race ID in forwardPayload
+//   3. Payout           (owner) sends 95% to winner; 5% stays in contract
+//                        as house fee; emits WinnerDeclared
+//   4. Refund           (owner) returns each player's stake if race is
+//                        cancelled; emits RaceRefunded
+//   5. WithdrawJettons  (owner) sweeps accumulated house fees out of the
+//                        contract to any address
+//   6. SetJettonWallet  (owner) updates the Lada jetton wallet address
+//                        (needed once after deployment — the address can
+//                        only be computed after the contract is deployed)
 //
-//  Why commit-reveal is secure here:
-//   - Once both commits are stored, neither secret can change.
-//   - sha256(secret) is one-way, so player B can't infer player A's
-//     secret from the commit alone.
-//   - The winner is therefore fully determined the moment the second
-//     commit lands — reveal just exposes it.
-//   - `now()` is mixed in only to produce extra entropy for the
-//     frontend's visual replay seed; it does not change who wins.
+//  This design removes the three-transaction commit-reveal flow.
+//  Players sign ONE transaction: their jetton deposit.
+//  The backend (house wallet) determines the winner server-side and
+//  triggers the payout.
 // =====================================================================
 
 import "@stdlib/deploy";
 
 // ───── Economic constants ───────────────────────────────────────────
-const HOUSE_FEE_BPS: Int = 500;            // 5%  → house wallet
+const HOUSE_FEE_BPS: Int = 500;            // 5%  stays in contract
 const BPS_DENOMINATOR: Int = 10000;
 
-// ───── Timeouts (seconds) ───────────────────────────────────────────
-const COMMIT_TIMEOUT_SECS: Int = 1800;     // 30 min to commit after both deposits
-const REVEAL_TIMEOUT_SECS: Int = 600;      // 10 min to reveal after both commits
-
-// ───── TON gas budgeting ────────────────────────────────────────────
+// ───── TON gas budget for outbound jetton transfers ─────────────────
 const JETTON_FORWARD_TON: Int = ton("0.05");
 const JETTON_NOTIFY_TON: Int = ton("0.01");
 
-// ───── Race state machine ───────────────────────────────────────────
-const STATE_AWAITING_DEPOSITS: Int = 0;
-const STATE_AWAITING_COMMITS: Int  = 1;
-const STATE_AWAITING_REVEALS: Int  = 2;
-const STATE_SETTLED: Int           = 3;
-const STATE_REFUNDED: Int          = 4;
+// ───── Race states ──────────────────────────────────────────────────
+const STATE_AWAITING_DEPOSITS: Int = 0;    // waiting for both deposits
+const STATE_FUNDED: Int = 1;               // both deposits received — owner can payout/refund
 
 // =====================================================================
 //  Messages — incoming
 // =====================================================================
 
-// TEP-74 standard: notification fired by our jetton wallet on deposit
+// TEP-74: fired by our jetton wallet when it receives Lada
 message(0x7362d09c) TokenNotification {
     queryId: Int as uint64;
     amount: Int as coins;
@@ -64,6 +52,7 @@ message(0x7362d09c) TokenNotification {
     forwardPayload: Slice as remaining;
 }
 
+// Owner creates a race (must happen before deposits)
 message(0x6c726300) CreateRace {
     raceId: Int as uint64;
     stake: Int as coins;
@@ -71,24 +60,34 @@ message(0x6c726300) CreateRace {
     player2: Address;
 }
 
-message(0x6c726301) CommitHash {
+// Owner triggers payout once race result is known server-side
+message(0x6c726304) Payout {
     raceId: Int as uint64;
-    commit: Int as uint256;            // sha256(secret)
+    winner: Address;
+    seed: Int as uint256;       // server-generated random seed, echoed in WinnerDeclared
 }
 
-message(0x6c726302) RevealSecret {
+// Owner refunds both players (e.g. race cancelled)
+message(0x6c726305) Refund {
     raceId: Int as uint64;
-    secret: Int as uint256;
 }
 
-message(0x6c726303) TimeoutRefund {
-    raceId: Int as uint64;
+// Owner sweeps accumulated house fees to any address
+message(0x6c726306) WithdrawJettons {
+    amount: Int as coins;
+    to: Address;
+}
+
+// Owner sets/updates the Lada jetton wallet after deployment
+message(0x6c726307) SetJettonWallet {
+    wallet: Address;
 }
 
 // =====================================================================
-//  Messages — outgoing (events)
+//  Messages — outgoing events (indexed by the backend)
 // =====================================================================
 
+// Emitted when the owner calls Payout successfully
 message(0x6c7263f1) WinnerDeclared {
     raceId: Int as uint64;
     winner: Address;
@@ -99,6 +98,7 @@ message(0x6c7263f1) WinnerDeclared {
     houseFee: Int as coins;
 }
 
+// Emitted when the owner calls Refund
 message(0x6c7263f2) RaceRefunded {
     raceId: Int as uint64;
     player1: Address;
@@ -107,7 +107,7 @@ message(0x6c7263f2) RaceRefunded {
 }
 
 // =====================================================================
-//  Messages — outgoing (jetton transfer, TEP-74 standard)
+//  Messages — outgoing jetton transfer (TEP-74)
 // =====================================================================
 
 message(0xf8a7ea5) TokenTransfer {
@@ -130,16 +130,6 @@ struct Race {
     player2: Address;
     deposited1: Bool;
     deposited2: Bool;
-    commit1: Int as uint256;
-    commit2: Int as uint256;
-    hasCommit1: Bool;
-    hasCommit2: Bool;
-    secret1: Int as uint256;
-    secret2: Int as uint256;
-    hasReveal1: Bool;
-    hasReveal2: Bool;
-    commitDeadline: Int as uint32;
-    revealDeadline: Int as uint32;
     state: Int as uint8;
 }
 
@@ -150,7 +140,7 @@ struct Race {
 contract LadaEscrow with Deployable {
     owner: Address;
     houseWallet: Address;
-    ladaJettonWallet: Address;          // this contract's jetton wallet for Lada
+    ladaJettonWallet: Address;          // this contract's Lada jetton wallet
     races: map<Int as uint64, Race>;
 
     init(owner: Address, houseWallet: Address, ladaJettonWallet: Address) {
@@ -159,7 +149,7 @@ contract LadaEscrow with Deployable {
         self.ladaJettonWallet = ladaJettonWallet;
     }
 
-    // ───── 1. Race creation (owner-only) ───────────────────────────
+    // ───── 1. Race creation ────────────────────────────────────────
     receive(msg: CreateRace) {
         require(sender() == self.owner, "Only owner may create races");
         require(self.races.get(msg.raceId) == null, "Race already exists");
@@ -172,33 +162,20 @@ contract LadaEscrow with Deployable {
             player2: msg.player2,
             deposited1: false,
             deposited2: false,
-            commit1: 0,
-            commit2: 0,
-            hasCommit1: false,
-            hasCommit2: false,
-            secret1: 0,
-            secret2: 0,
-            hasReveal1: false,
-            hasReveal2: false,
-            commitDeadline: now() + COMMIT_TIMEOUT_SECS,
-            revealDeadline: 0,
             state: STATE_AWAITING_DEPOSITS
         });
     }
 
-    // ───── 2. Jetton deposit notification ──────────────────────────
+    // ───── 2. Jetton deposit ───────────────────────────────────────
     //
-    // The player sends Lada jettons to this contract. The jetton wallet
-    // associated with this contract receives them, internally credits the
-    // contract, and forwards a TokenNotification with `from` = original
-    // sender and `forwardPayload` containing the race ID.
+    // The player's jetton wallet sends tokens to our jetton wallet, which
+    // forwards a TokenNotification. The forwardPayload must contain the
+    // uint64 raceId as the first 64 bits (no Either prefix).
     //
-    // Any deposit we can't credit (unknown race, wrong amount, wrong race
-    // phase, non-player, duplicate) is refunded immediately.
+    // Any deposit we can't credit is immediately refunded.
     receive(msg: TokenNotification) {
         require(sender() == self.ladaJettonWallet, "Only Lada jetton wallet may notify");
 
-        // Forward payload must start with a uint64 race ID
         let payload: Slice = msg.forwardPayload;
         if (payload.bits() < 64) {
             self.sendJetton(msg.from, msg.amount, 0);
@@ -213,6 +190,7 @@ contract LadaEscrow with Deployable {
         }
         let r: Race = maybeRace!!;
 
+        // Only accept deposits in the right phase and for the exact stake
         if (r.state != STATE_AWAITING_DEPOSITS || msg.amount != r.stake) {
             self.sendJetton(msg.from, msg.amount, 0);
             return;
@@ -223,108 +201,73 @@ contract LadaEscrow with Deployable {
         } else if (msg.from == r.player2 && !r.deposited2) {
             r.deposited2 = true;
         } else {
-            // Unknown depositor or duplicate deposit
+            // Unknown depositor or duplicate — refund
             self.sendJetton(msg.from, msg.amount, 0);
             return;
         }
 
-        // Both deposits in → advance to the commit phase
+        // Both deposits received → advance to funded state
         if (r.deposited1 && r.deposited2) {
-            r.state = STATE_AWAITING_COMMITS;
-            r.commitDeadline = now() + COMMIT_TIMEOUT_SECS;
+            r.state = STATE_FUNDED;
         }
         self.races.set(raceId, r);
     }
 
-    // ───── 3. Commit phase ─────────────────────────────────────────
-    receive(msg: CommitHash) {
+    // ───── 3. Payout (owner only) ──────────────────────────────────
+    //
+    // Sends 95% to the winner. The 5% house fee stays in this contract
+    // and is swept later via WithdrawJettons.
+    receive(msg: Payout) {
+        require(sender() == self.owner, "Only owner may payout");
+
         let maybeRace: Race? = self.races.get(msg.raceId);
         require(maybeRace != null, "Unknown race");
         let r: Race = maybeRace!!;
 
-        require(r.state == STATE_AWAITING_COMMITS, "Not in commit phase");
-        require(now() < r.commitDeadline, "Commit window closed");
+        require(r.state == STATE_FUNDED, "Race not in funded state");
+        require(msg.winner == r.player1 || msg.winner == r.player2, "Winner must be a player");
 
-        if (sender() == r.player1) {
-            require(!r.hasCommit1, "Player1 already committed");
-            r.commit1 = msg.commit;
-            r.hasCommit1 = true;
-        } else if (sender() == r.player2) {
-            require(!r.hasCommit2, "Player2 already committed");
-            r.commit2 = msg.commit;
-            r.hasCommit2 = true;
-        } else {
-            require(false, "Not a player in this race");
-        }
+        let loser: Address = r.player2;
+        if (msg.winner == r.player2) { loser = r.player1; }
 
-        // Both commits in → start the reveal clock
-        if (r.hasCommit1 && r.hasCommit2) {
-            r.state = STATE_AWAITING_REVEALS;
-            r.revealDeadline = now() + REVEAL_TIMEOUT_SECS;
-        }
-        self.races.set(msg.raceId, r);
+        let pot: Int = r.stake * 2;
+        let houseFee: Int = (pot * HOUSE_FEE_BPS) / BPS_DENOMINATOR;
+        let payout: Int = pot - houseFee;
+
+        // 95% → winner; 5% stays in contract
+        self.sendJetton(msg.winner, payout, msg.raceId);
+
+        emit(WinnerDeclared{
+            raceId: msg.raceId,
+            winner: msg.winner,
+            loser: loser,
+            combinedSeed: msg.seed,
+            pot: pot,
+            payout: payout,
+            houseFee: houseFee
+        }.toCell());
+
+        self.races.del(msg.raceId);
     }
 
-    // ───── 4. Reveal phase ─────────────────────────────────────────
-    receive(msg: RevealSecret) {
-        let maybeRace: Race? = self.races.get(msg.raceId);
-        require(maybeRace != null, "Unknown race");
-        let r: Race = maybeRace!!;
+    // ───── 4. Refund (owner only) ──────────────────────────────────
+    //
+    // Returns each player's stake. Works from either phase
+    // (AWAITING_DEPOSITS or FUNDED) so the owner can cancel at any time.
+    receive(msg: Refund) {
+        require(sender() == self.owner, "Only owner may refund");
 
-        require(r.state == STATE_AWAITING_REVEALS, "Not in reveal phase");
-        require(now() < r.revealDeadline, "Reveal window closed");
-
-        // sha256(secret as 256-bit) must match the stored commit
-        let secretHash: Int = sha256(beginCell().storeUint(msg.secret, 256).endCell().asSlice());
-
-        if (sender() == r.player1) {
-            require(!r.hasReveal1, "Player1 already revealed");
-            require(secretHash == r.commit1, "Secret does not match commit");
-            r.secret1 = msg.secret;
-            r.hasReveal1 = true;
-        } else if (sender() == r.player2) {
-            require(!r.hasReveal2, "Player2 already revealed");
-            require(secretHash == r.commit2, "Secret does not match commit");
-            r.secret2 = msg.secret;
-            r.hasReveal2 = true;
-        } else {
-            require(false, "Not a player in this race");
-        }
-
-        if (r.hasReveal1 && r.hasReveal2) {
-            self.settle(msg.raceId, r);
-            return;
-        }
-        self.races.set(msg.raceId, r);
-    }
-
-    // ───── 5. Timeout refund (anyone can trigger) ──────────────────
-    receive(msg: TimeoutRefund) {
         let maybeRace: Race? = self.races.get(msg.raceId);
         require(maybeRace != null, "Unknown race");
         let r: Race = maybeRace!!;
 
         require(
-            r.state == STATE_AWAITING_DEPOSITS ||
-            r.state == STATE_AWAITING_COMMITS ||
-            r.state == STATE_AWAITING_REVEALS,
-            "Already finalized"
+            r.state == STATE_AWAITING_DEPOSITS || r.state == STATE_FUNDED,
+            "Race already finalized"
         );
 
-        // Which deadline applies depends on the current phase
-        let deadline: Int = r.commitDeadline;
-        if (r.state == STATE_AWAITING_REVEALS) {
-            deadline = r.revealDeadline;
-        }
-        require(now() > deadline, "Not yet timed out");
-
-        // Refund any deposit that actually landed
-        if (r.deposited1) {
-            self.sendJetton(r.player1, r.stake, msg.raceId);
-        }
-        if (r.deposited2) {
-            self.sendJetton(r.player2, r.stake, msg.raceId);
-        }
+        if (r.deposited1) { self.sendJetton(r.player1, r.stake, msg.raceId); }
+        if (r.deposited2) { self.sendJetton(r.player2, r.stake, msg.raceId); }
 
         emit(RaceRefunded{
             raceId: msg.raceId,
@@ -333,51 +276,36 @@ contract LadaEscrow with Deployable {
             refundAmount: r.stake
         }.toCell());
 
-        // Race is finalized — free the storage slot
         self.races.del(msg.raceId);
     }
 
-    // ───── Settlement (internal) ───────────────────────────────────
-    fun settle(raceId: Int, r: Race) {
-        // Hash both secrets together with the current time. We hash rather than
-        // XOR so the 256-bit seed is uniformly distributed for the frontend's
-        // visual replay. The winner is still determined by the secrets alone —
-        // `now()` only adds entropy to the visual seed.
-        let seedCell: Cell = beginCell()
-            .storeUint(r.secret1, 256)
-            .storeUint(r.secret2, 256)
-            .storeUint(now(), 32)
-            .endCell();
-        let combinedSeed: Int = sha256(seedCell.asSlice());
+    // ───── 5. WithdrawJettons (owner only) ─────────────────────────
+    //
+    // Sweeps accumulated house fees (5% of each settled race) to `to`.
+    receive(msg: WithdrawJettons) {
+        require(sender() == self.owner, "Only owner may withdraw");
+        self.sendJetton(msg.to, msg.amount, 0);
+    }
 
-        let winnerIndex: Int = combinedSeed % 2;
-        let winner: Address = r.player1;
-        let loser: Address = r.player2;
-        if (winnerIndex == 1) {
-            winner = r.player2;
-            loser = r.player1;
-        }
+    // ───── 6. SetJettonWallet (owner only) ─────────────────────────
+    //
+    // The contract's own jetton wallet address can only be determined
+    // after the contract is deployed (it depends on the contract address).
+    // This one-time setter lets the owner wire it up post-deployment.
+    receive(msg: SetJettonWallet) {
+        require(sender() == self.owner, "Only owner may set jetton wallet");
+        self.ladaJettonWallet = msg.wallet;
+    }
 
-        let pot: Int = r.stake * 2;
-        let houseFee: Int = (pot * HOUSE_FEE_BPS) / BPS_DENOMINATOR;
-        let payout: Int = pot - houseFee;
-
-        // 95% → winner, 5% → house wallet
-        self.sendJetton(winner, payout, raceId);
-        self.sendJetton(self.houseWallet, houseFee, raceId);
-
-        emit(WinnerDeclared{
-            raceId: raceId,
-            winner: winner,
-            loser: loser,
-            combinedSeed: combinedSeed,
-            pot: pot,
-            payout: payout,
-            houseFee: houseFee
-        }.toCell());
-
-        // Race is finalized — free the storage slot
-        self.races.del(raceId);
+    // ───── 7. Sweep stuck TON ─────────────────────────────────────
+    receive("withdrawTon") {
+        require(sender() == self.owner, "Only owner");
+        send(SendParameters{
+            to: self.owner,
+            value: 0,
+            mode: SendRemainingBalance + SendIgnoreErrors,
+            body: emptyCell()
+        });
     }
 
     // ───── Jetton transfer helper ──────────────────────────────────
@@ -395,19 +323,6 @@ contract LadaEscrow with Deployable {
                 forwardTonAmount: JETTON_NOTIFY_TON,
                 forwardPayload: emptySlice()
             }.toCell()
-        });
-    }
-
-    // ───── Owner ops ───────────────────────────────────────────────
-    receive("withdrawTon") {
-        // Recover stuck TON gas (never touches jettons). Bounced jetton
-        // transfers from settlements land here; the owner can sweep them.
-        require(sender() == self.owner, "Only owner");
-        send(SendParameters{
-            to: self.owner,
-            value: 0,
-            mode: SendRemainingBalance + SendIgnoreErrors,
-            body: emptyCell()
         });
     }
 

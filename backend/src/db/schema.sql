@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS races (
   stake            NUMERIC(30, 0) NOT NULL,
   pot              NUMERIC(30, 0) NOT NULL,
   state            TEXT NOT NULL DEFAULT 'awaiting_deposits',
-  --                awaiting_deposits | awaiting_commits | awaiting_reveals | settled | refunded
+  --                awaiting_deposits | settled | refunded
   player1_deposited BOOLEAN NOT NULL DEFAULT false,
   player2_deposited BOOLEAN NOT NULL DEFAULT false,
   player1_committed BOOLEAN NOT NULL DEFAULT false,
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS races (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at      TIMESTAMPTZ,
   CONSTRAINT races_state_chk CHECK (state IN (
-    'awaiting_deposits','awaiting_commits','awaiting_reveals','settled','refunded'
+    'awaiting_deposits','settled','refunded'
   ))
 );
 
@@ -143,11 +143,11 @@ ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS username TEXT;
 ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS min_players INT NOT NULL DEFAULT 2;
 ALTER TABLE lobbies ALTER COLUMN max_players SET DEFAULT 5;
 
--- Allow 'active' as a race state (race results predetermined server-side but
--- frontend hasn't replayed yet). Rebuild the constraint idempotently.
+-- v2: owner-payout model — only two active states now.
+-- Drop and recreate the constraint idempotently.
 ALTER TABLE races DROP CONSTRAINT IF EXISTS races_state_chk;
 ALTER TABLE races ADD CONSTRAINT races_state_chk CHECK (state IN (
-  'awaiting_deposits','awaiting_commits','awaiting_reveals','active','settled','refunded'
+  'awaiting_deposits','settled','refunded'
 ));
 
 -- ─────────────────────────────────────────────────────────────────────

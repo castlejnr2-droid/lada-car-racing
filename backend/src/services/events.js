@@ -1,15 +1,23 @@
 /**
- * Event handlers — one per event type the contract or jetton wallet emits.
+ * Event handlers — one per event type the contract emits.
  *
  * Called from the indexer when it parses an on-chain event.
  * Each handler is idempotent (uses ON CONFLICT) so duplicate deliveries
  * don't double-credit a player or double-record a fee.
+ *
+ * New lifecycle (LadaEscrow v2 — owner payout):
+ *   1. Both players deposit → handleDeposit generates winner server-side,
+ *      stores winner/seed in DB, fires payoutRace() on-chain (fire-and-forget).
+ *   2. Contract emits WinnerDeclared → handleWinnerDeclared sets state=settled.
+ *   3. If refund: handleRaceRefunded sets state=refunded.
  */
+import { randomBytes } from 'crypto';
 import { Address } from '@ton/core';
 import { query } from '../db/pool.js';
+import { payoutRace } from './housePayout.js';
 
 /**
- * Normalize any TON address format to raw "0:hex" string for SQL comparison.
+ * Normalize any TON address format to raw "0:hex" for comparison.
  * Returns null if the input is falsy or unparseable.
  */
 function normalizeAddr(a) {
@@ -18,7 +26,7 @@ function normalizeAddr(a) {
     return Address.parse(a).toRawString();
   } catch {
     console.warn('[events] could not normalize address:', a);
-    return a; // fall back to original so we don't silently lose data
+    return a;
   }
 }
 
@@ -36,15 +44,12 @@ async function recordTx({ txHash, lt, type, raceId, player, amount, raw }) {
 }
 
 /**
- * Look up the race row by on-chain race id.
- * Returns null if the race hasn't been registered locally yet.
+ * Look up the race row by on-chain race id (includes all fields needed for payout).
  */
 async function raceRowFor(onChainId) {
   const { rows } = await query(
-    `SELECT id, state, player1, player2,
-            player1_deposited, player2_deposited,
-            player1_committed, player2_committed,
-            player1_revealed,  player2_revealed
+    `SELECT id, on_chain_id::text, state, player1, player2,
+            player1_deposited, player2_deposited
        FROM races
       WHERE on_chain_id = $1`,
     [onChainId],
@@ -85,141 +90,54 @@ export async function handleDeposit(e) {
   console.log(`[events.Deposit] isP1=${isP1} isP2=${isP2}`);
 
   if (!isP1 && !isP2) {
-    console.warn(`[events.Deposit] depositor ${fromNorm} is neither player1 (${p1Norm}) nor player2 (${p2Norm}) — ignoring`);
+    console.warn(`[events.Deposit] depositor ${fromNorm} is neither player — ignoring`);
     return { skipped: true, reason: 'unknown player' };
   }
 
   const newP1dep = race.player1_deposited || isP1;
   const newP2dep = race.player2_deposited || isP2;
-  console.log(`[events.Deposit] p1_deposited: ${race.player1_deposited} → ${newP1dep} | p2_deposited: ${race.player2_deposited} → ${newP2dep}`);
+  console.log(`[events.Deposit] p1_dep: ${race.player1_deposited}→${newP1dep} | p2_dep: ${race.player2_deposited}→${newP2dep}`);
 
   await query(
-    `UPDATE races
-        SET player1_deposited = $2,
-            player2_deposited = $3
-      WHERE id = $1`,
+    `UPDATE races SET player1_deposited=$2, player2_deposited=$3 WHERE id=$1`,
     [race.id, newP1dep, newP2dep],
   );
 
   if (newP1dep && newP2dep && race.state === 'awaiting_deposits') {
-    console.log(`[events.Deposit] BOTH deposited — advancing state to awaiting_commits`);
-    const { rowCount } = await query(
-      `UPDATE races
-          SET state = 'awaiting_commits'
-        WHERE id = $1
-          AND state = 'awaiting_deposits'`,
-      [race.id],
+    console.log(`[events.Deposit] BOTH deposited — generating winner and triggering payout`);
+
+    // Generate a cryptographically random 256-bit seed server-side
+    const seedBytes  = randomBytes(32);
+    const seedHex    = '0x' + seedBytes.toString('hex');
+    const seedBigInt = BigInt(seedHex);
+
+    // Determine winner: if seed is even → player1 wins; odd → player2 wins
+    const winner = seedBigInt % 2n === 0n ? race.player1 : race.player2;
+    const loser  = winner === race.player1 ? race.player2 : race.player1;
+    console.log(`[events.Deposit] winner=${winner} seed=${seedHex}`);
+
+    // Store winner + seed in DB now (so admin can see them even if on-chain payout fails)
+    await query(
+      `UPDATE races SET combined_seed=$2, winner=$3, loser=$4 WHERE id=$1`,
+      [race.id, seedHex, winner, loser],
     );
-    console.log(`[events.Deposit] state UPDATE rowCount=${rowCount}`);
-  } else {
-    console.log(`[events.Deposit] waiting for other deposit (p1=${newP1dep} p2=${newP2dep} state=${race.state})`);
+
+    // Fire payout on-chain — fire-and-forget.
+    // WinnerDeclared event will set state=settled once the tx lands.
+    payoutRace({
+      raceId: race.on_chain_id,
+      winner,
+      seed: seedBigInt,
+    }).then(() => {
+      console.log(`[events.Deposit] payoutRace sent OK for race=${race.id}`);
+    }).catch((err) => {
+      console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
+      console.error(`[events.Deposit] admin can retry payout manually for on_chain_id=${race.on_chain_id}`);
+    });
+  } else if (newP1dep || newP2dep) {
+    console.log(`[events.Deposit] one deposit in, waiting for other (p1=${newP1dep} p2=${newP2dep})`);
   }
 
-  return { ok: true };
-}
-
-// ──────────────────────────────────────────────────────────────────────
-//  Commit — player submitted hash(secret)
-// ──────────────────────────────────────────────────────────────────────
-export async function handleCommit(e) {
-  console.log(`[events.Commit] player=${e.player} raceId(chain)=${e.raceId} txHash=${e.txHash}`);
-
-  const race = await raceRowFor(e.raceId);
-  if (!race) {
-    console.warn(`[events.Commit] unknown on-chain raceId=${e.raceId} — skipping`);
-    return { skipped: true, reason: 'unknown race' };
-  }
-  console.log(`[events.Commit] found race id=${race.id} state=${race.state}`);
-
-  const fresh = await recordTx({
-    txHash: e.txHash, lt: e.lt, type: 'commit',
-    raceId: race.id, player: e.player, raw: e,
-  });
-  if (!fresh) {
-    console.log(`[events.Commit] duplicate tx — skipping`);
-    return { skipped: true, reason: 'duplicate' };
-  }
-
-  const playerNorm = normalizeAddr(e.player);
-  const p1Norm     = normalizeAddr(race.player1);
-  const p2Norm     = normalizeAddr(race.player2);
-
-  const isP1 = playerNorm && p1Norm && playerNorm === p1Norm;
-  const isP2 = playerNorm && p2Norm && playerNorm === p2Norm;
-  console.log(`[events.Commit] isP1=${isP1} isP2=${isP2}`);
-
-  const newP1com = race.player1_committed || isP1;
-  const newP2com = race.player2_committed || isP2;
-  console.log(`[events.Commit] p1_committed: ${race.player1_committed} → ${newP1com} | p2_committed: ${race.player2_committed} → ${newP2com}`);
-
-  await query(
-    `UPDATE races
-        SET player1_committed = $2,
-            player2_committed = $3
-      WHERE id = $1`,
-    [race.id, newP1com, newP2com],
-  );
-
-  if (newP1com && newP2com && race.state === 'awaiting_commits') {
-    console.log(`[events.Commit] BOTH committed — advancing state to awaiting_reveals`);
-    const { rowCount } = await query(
-      `UPDATE races
-          SET state = 'awaiting_reveals'
-        WHERE id = $1
-          AND state = 'awaiting_commits'`,
-      [race.id],
-    );
-    console.log(`[events.Commit] state UPDATE rowCount=${rowCount}`);
-  } else {
-    console.log(`[events.Commit] waiting for other commit (p1=${newP1com} p2=${newP2com} state=${race.state})`);
-  }
-
-  return { ok: true };
-}
-
-// ──────────────────────────────────────────────────────────────────────
-//  Reveal — player revealed their secret (settle may also have fired)
-// ──────────────────────────────────────────────────────────────────────
-export async function handleReveal(e) {
-  console.log(`[events.Reveal] player=${e.player} raceId(chain)=${e.raceId} txHash=${e.txHash}`);
-
-  const race = await raceRowFor(e.raceId);
-  if (!race) {
-    console.warn(`[events.Reveal] unknown on-chain raceId=${e.raceId} — skipping`);
-    return { skipped: true, reason: 'unknown race' };
-  }
-  console.log(`[events.Reveal] found race id=${race.id} state=${race.state}`);
-
-  const fresh = await recordTx({
-    txHash: e.txHash, lt: e.lt, type: 'reveal',
-    raceId: race.id, player: e.player, raw: e,
-  });
-  if (!fresh) {
-    console.log(`[events.Reveal] duplicate tx — skipping`);
-    return { skipped: true, reason: 'duplicate' };
-  }
-
-  const playerNorm = normalizeAddr(e.player);
-  const p1Norm     = normalizeAddr(race.player1);
-  const p2Norm     = normalizeAddr(race.player2);
-
-  const isP1 = playerNorm && p1Norm && playerNorm === p1Norm;
-  const isP2 = playerNorm && p2Norm && playerNorm === p2Norm;
-  console.log(`[events.Reveal] isP1=${isP1} isP2=${isP2}`);
-
-  const newP1rev = race.player1_revealed || isP1;
-  const newP2rev = race.player2_revealed || isP2;
-  console.log(`[events.Reveal] p1_revealed: ${race.player1_revealed} → ${newP1rev} | p2_revealed: ${race.player2_revealed} → ${newP2rev}`);
-
-  await query(
-    `UPDATE races
-        SET player1_revealed = $2,
-            player2_revealed = $3
-      WHERE id = $1`,
-    [race.id, newP1rev, newP2rev],
-  );
-
-  console.log(`[events.Reveal] done (contract will auto-settle on 2nd reveal — waiting for WinnerDeclared event)`);
   return { ok: true };
 }
 
@@ -227,7 +145,7 @@ export async function handleReveal(e) {
 //  WinnerDeclared — settlement event from the escrow contract
 // ──────────────────────────────────────────────────────────────────────
 export async function handleWinnerDeclared(e) {
-  console.log(`[events.WinnerDeclared] raceId(chain)=${e.raceId} winner=${e.winner} payout=${e.payout} houseFee=${e.houseFee} txHash=${e.txHash}`);
+  console.log(`[events.WinnerDeclared] raceId(chain)=${e.raceId} winner=${e.winner} payout=${e.payout} txHash=${e.txHash}`);
 
   const race = await raceRowFor(e.raceId);
   if (!race) {
@@ -248,19 +166,19 @@ export async function handleWinnerDeclared(e) {
   const { rowCount } = await query(
     `UPDATE races
         SET state          = 'settled',
-            winner         = $2,
-            loser          = $3,
-            combined_seed  = $4,
+            winner         = COALESCE(winner, $2),
+            loser          = COALESCE(loser, $3),
+            combined_seed  = COALESCE(combined_seed, $4),
             winner_payout  = $5,
             house_fee      = $6,
             settle_tx_hash = $7,
-            finished_at    = now()
+            finished_at    = COALESCE(finished_at, now())
       WHERE id = $1`,
     [race.id, e.winner, e.loser, e.combinedSeed, e.payout, e.houseFee, e.txHash],
   );
-  console.log(`[events.WinnerDeclared] race UPDATE rowCount=${rowCount} → state=settled winner=${e.winner}`);
+  console.log(`[events.WinnerDeclared] UPDATE rowCount=${rowCount} → state=settled winner=${e.winner}`);
 
-  // Record the house fee
+  // Record house fee bookkeeping row
   await query(
     `INSERT INTO house_fees (race_id, amount, tx_hash)
      VALUES ($1, $2, $3)
@@ -276,7 +194,7 @@ export async function handleWinnerDeclared(e) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  RaceRefunded — both players got their stake back after a timeout
+//  RaceRefunded — owner triggered a refund
 // ──────────────────────────────────────────────────────────────────────
 export async function handleRaceRefunded(e) {
   console.log(`[events.RaceRefunded] raceId(chain)=${e.raceId} refundAmount=${e.refundAmount} txHash=${e.txHash}`);
@@ -298,21 +216,16 @@ export async function handleRaceRefunded(e) {
   }
 
   const { rowCount } = await query(
-    `UPDATE races
-        SET state       = 'refunded',
-            finished_at = now()
-      WHERE id = $1`,
+    `UPDATE races SET state='refunded', finished_at=now() WHERE id=$1`,
     [race.id],
   );
-  console.log(`[events.RaceRefunded] race UPDATE rowCount=${rowCount} → state=refunded`);
+  console.log(`[events.RaceRefunded] UPDATE rowCount=${rowCount} → state=refunded`);
 
   return { ok: true };
 }
 
 export const handlers = {
   Deposit:         handleDeposit,
-  Commit:          handleCommit,
-  Reveal:          handleReveal,
   WinnerDeclared:  handleWinnerDeclared,
   RaceRefunded:    handleRaceRefunded,
 };
