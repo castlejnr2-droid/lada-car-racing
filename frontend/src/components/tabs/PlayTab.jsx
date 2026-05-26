@@ -5,19 +5,27 @@ import { fetchLobbies, createLobby, joinLobby } from '../../api/lobbies.js';
 import { fetchRace } from '../../api/races.js';
 import { useMainButton, haptic, tgUser } from '../../lib/telegram.js';
 import { formatLada, ladaToNano, shortAddress } from '../../lib/format.js';
+import { buildLobbyDeposit } from '../../blockchain/jetton.js';
+import { useTonSender } from '../../blockchain/tonConnect.js';
 
 const PLAYER_OPTIONS = [2, 3, 4, 5];
 
-export default function PlayTab() {
+export default function PlayTab({ balance = null }) {
   const [lobbies, setLobbies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [stake, setStake] = useState('10');
   const [minPlayers, setMinPlayers] = useState(2);
+  const [sending, setSending] = useState(false);
   const [myPendingLobbyId, setMyPendingLobbyId] = useState(null);
   const address = useTonAddress();
+  const { send } = useTonSender();
   const navigate = useNavigate();
   const username = tgUser()?.username || tgUser()?.first_name || null;
+
+  const stakeNano = ladaToNano(stake || '0');
+  const balanceOk = balance === null || stakeNano <= balance;
+  const stakeValid = stakeNano > 0n && balanceOk;
 
   // Poll for race start when the creator is waiting for players to join
   useEffect(() => {
@@ -57,23 +65,31 @@ export default function PlayTab() {
   }, [creating, address]);
 
   async function handleCreate() {
+    if (!stakeValid) return;
+    setSending(true);
     try {
       haptic.medium();
       const lobby = await createLobby({
-        stake: ladaToNano(stake).toString(),
+        stake: stakeNano.toString(),
         creator: address,
         username,
         minPlayers,
         maxPlayers: 5,
       });
+
+      // Send LADA deposit to escrow with lobby ID as the comment
+      const tx = await buildLobbyDeposit({ owner: address, amount: stakeNano, lobbyId: lobby.id });
+      await send(tx);
+
       setCreating(false);
       haptic.success();
-      setMyPendingLobbyId(lobby.id);  // start polling so creator navigates when race starts
+      setMyPendingLobbyId(lobby.id);
       refresh();
-      return lobby;
     } catch (e) {
       haptic.error();
       alert(e.message);
+    } finally {
+      setSending(false);
     }
   }
 
@@ -111,12 +127,25 @@ export default function PlayTab() {
       {creating && (
         <div className="card">
           <div className="field">
-            <label>Stake (LADA)</label>
+            <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Wager (LADA)</span>
+              {balance !== null && (
+                <span style={{ color: 'var(--accent-2)' }}>
+                  Balance: {Number(balance / 1_000_000_000n).toLocaleString()} LADA
+                </span>
+              )}
+            </label>
             <input
               type="number" inputMode="decimal" min="0" step="0.1"
               value={stake} onChange={(e) => setStake(e.target.value)}
               autoFocus
+              style={{ borderColor: !balanceOk ? 'var(--error)' : undefined }}
             />
+            {!balanceOk && (
+              <div style={{ color: 'var(--error)', fontSize: 12, marginTop: 4 }}>
+                Insufficient balance
+              </div>
+            )}
           </div>
 
           <div className="field">
@@ -135,14 +164,17 @@ export default function PlayTab() {
               ))}
             </div>
             <div style={{ color: 'var(--fg-muted)', fontSize: 12, marginTop: 4 }}>
-              Max 5 players per lobby. The race auto-starts once the chosen
-              minimum is reached.
+              Max 5 players per lobby. The race auto-starts once the chosen minimum is reached.
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn--ghost" onClick={() => setCreating(false)}>Cancel</button>
-            <button className="btn" onClick={handleCreate}>Create</button>
+            <button className="btn btn--ghost" disabled={sending} onClick={() => setCreating(false)}>
+              Cancel
+            </button>
+            <button className="btn" disabled={!stakeValid || sending} onClick={handleCreate}>
+              {sending ? 'Sending…' : 'Confirm & deposit'}
+            </button>
           </div>
         </div>
       )}

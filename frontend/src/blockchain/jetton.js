@@ -13,8 +13,11 @@ const TONAPI_BASE = import.meta.env.VITE_TON_NETWORK === 'mainnet'
   ? 'https://tonapi.io'
   : 'https://testnet.tonapi.io';
 
-const LADA_MASTER = import.meta.env.VITE_LADA_JETTON_MASTER;
-const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_CONTRACT_ADDRESS;
+// Env vars take precedence; hardcoded values are the deployed contract addresses.
+const LADA_MASTER    = import.meta.env.VITE_LADA_JETTON_MASTER
+  || 'EQBjNisz_m-sdA9TcosQMmugdhl6hDjGcCMgQFa85p_8jx7p';
+const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_CONTRACT_ADDRESS
+  || 'EQDjkkULU_3fxlbrR_kSVsogIi9ifxJ44aWoNHT1zr5ZVLPZ';
 
 /** Returns the jetton wallet address for `owner` (a TON address string). */
 export async function getUserJettonWallet(owner) {
@@ -49,6 +52,43 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   if (!userJettonWallet) throw new Error('You have no Lada jetton wallet yet — buy some LADA first.');
 
   const forwardPayload = beginCell().storeUint(BigInt(raceIdOnChain), 64).endCell();
+
+  const body = beginCell()
+    .storeUint(JETTON_TRANSFER_OP, 32)
+    .storeUint(0n, 64)                                        // query id
+    .storeCoins(BigInt(amount))
+    .storeAddress(Address.parse(ESCROW_ADDRESS))              // destination
+    .storeAddress(Address.parse(owner))                       // response_destination
+    .storeBit(0)                                              // no custom_payload
+    .storeCoins(toNano('0.05'))                               // forward_ton_amount
+    .storeBit(1)                                              // forward_payload as ref
+    .storeRef(forwardPayload)
+    .endCell();
+
+  return {
+    validUntil: Math.floor(Date.now() / 1000) + 360,
+    messages: [{
+      address: userJettonWallet,
+      amount: toNano('0.1').toString(),
+      payload: body.toBoc().toString('base64'),
+    }],
+  };
+}
+
+/**
+ * Build a jetton deposit tx at lobby-creation time.
+ * Uses a text comment forward-payload carrying the lobby ID so the
+ * escrow contract (and the indexer) can identify which lobby this funds.
+ */
+export async function buildLobbyDeposit({ owner, amount, lobbyId }) {
+  const userJettonWallet = await getUserJettonWallet(owner);
+  if (!userJettonWallet) throw new Error('You have no Lada jetton wallet yet — buy some LADA first.');
+
+  // TEP-74 text-comment forward payload (op 0x00000000 + UTF-8 string)
+  const forwardPayload = beginCell()
+    .storeUint(0, 32)
+    .storeStringTail(String(lobbyId))
+    .endCell();
 
   const body = beginCell()
     .storeUint(JETTON_TRANSFER_OP, 32)

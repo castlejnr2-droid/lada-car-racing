@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTonAddress } from '@tonconnect/ui-react';
 import { tg, haptic, tgUser } from '../lib/telegram.js';
 import { upsertPlayer } from '../api/players.js';
+import { getLadaBalance } from '../blockchain/jetton.js';
 import PlayTab from './tabs/PlayTab.jsx';
 import StatsTab from './tabs/StatsTab.jsx';
 import LeaderboardTab from './tabs/LeaderboardTab.jsx';
@@ -14,6 +15,7 @@ const TABS = [
 
 export default function Home() {
   const [tab, setTab] = useState('play');
+  const [balance, setBalance] = useState(null);  // BigInt nano-LADA or null
   const address = useTonAddress();
 
   // Once a wallet is connected, upsert the player in the backend so the
@@ -28,6 +30,19 @@ export default function Home() {
     }).catch((e) => console.warn('[players] upsert failed', e));
   }, [address]);
 
+  // Fetch LADA balance whenever wallet changes; refresh every 30 s.
+  useEffect(() => {
+    if (!address) { setBalance(null); return; }
+    let cancelled = false;
+    async function fetch() {
+      const bal = await getLadaBalance(address);
+      if (!cancelled) setBalance(bal);
+    }
+    fetch();
+    const t = setInterval(fetch, 30_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [address]);
+
   useEffect(() => {
     // Home screen has no BackButton (this is the root)
     tg.BackButton.hide();
@@ -37,13 +52,20 @@ export default function Home() {
     <div className="app">
       <header className="app__header">
         <span><span className="logo">LADA</span> <span className="star">★</span> RACING</span>
-        <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-          {address ? address.slice(0, 4) + '…' + address.slice(-4) : 'not connected'}
-        </span>
+        <div style={{ textAlign: 'right', lineHeight: 1.35 }}>
+          <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
+            {address ? address.slice(0, 4) + '…' + address.slice(-4) : 'not connected'}
+          </div>
+          {address && balance !== null && (
+            <div style={{ fontSize: 11, color: 'var(--accent-2)', fontWeight: 'bold' }}>
+              💰 {Number(balance / 1_000_000_000n).toLocaleString()} LADA
+            </div>
+          )}
+        </div>
       </header>
 
       <main className="app__body">
-        {tab === 'play'        && <PlayTab />}
+        {tab === 'play'        && <PlayTab balance={balance} />}
         {tab === 'stats'       && <StatsTab />}
         {tab === 'leaderboard' && <LeaderboardTab />}
       </main>
