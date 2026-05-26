@@ -847,15 +847,14 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     }
   }
 
-  // body polygon
+  // body polygon — Lada 2107: short hood (~28%), long boxy cabin (~54%), notchback trunk (~18%)
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(px(1.00), py(0.72));
   ctx.lineTo(px(1.00), py(0.58));
-  ctx.lineTo(px(0.95), py(0.52));
-  ctx.lineTo(px(0.62), py(0.50));
-  ctx.lineTo(px(0.60), py(0.50));
-  ctx.lineTo(px(0.52), py(0.22));
+  ctx.lineTo(px(0.93), py(0.52));
+  ctx.lineTo(px(0.72), py(0.50));   // A-pillar base — moved fwd from 0.62 → shorter hood
+  ctx.lineTo(px(0.67), py(0.22));   // A-pillar top — nearly vertical windshield
   ctx.lineTo(px(0.25), py(0.20));
   ctx.lineTo(px(0.18), py(0.25));
   ctx.lineTo(px(0.12), py(0.50));
@@ -867,12 +866,12 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   // windows
   const glass = 'rgba(18,35,65,0.90)';
   ctx.fillStyle = glass;
-  ctx.beginPath(); ctx.moveTo(px(0.600),py(0.500)); ctx.lineTo(px(0.525),py(0.225)); ctx.lineTo(px(0.548),py(0.225)); ctx.lineTo(px(0.620),py(0.500)); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(px(0.720),py(0.500)); ctx.lineTo(px(0.672),py(0.225)); ctx.lineTo(px(0.692),py(0.225)); ctx.lineTo(px(0.738),py(0.500)); ctx.closePath(); ctx.fill();
   ctx.fillStyle = glass;
   ctx.beginPath(); ctx.moveTo(px(0.188),py(0.258)); ctx.lineTo(px(0.242),py(0.208)); ctx.lineTo(px(0.272),py(0.208)); ctx.lineTo(px(0.222),py(0.258)); ctx.lineTo(px(0.130),py(0.492)); ctx.lineTo(px(0.118),py(0.492)); ctx.closePath(); ctx.fill();
 
-  const roofAtX = (nx) => 0.20 + (0.22 - 0.20) * Math.max(0, (nx - 0.25) / (0.52 - 0.25));
-  const beltY = 0.455, winRear = 0.278, winFrnt = 0.553, bpX = winRear + (winFrnt - winRear) * 0.50;
+  const roofAtX = (nx) => 0.20 + (0.22 - 0.20) * Math.max(0, (nx - 0.25) / (0.67 - 0.25));
+  const beltY = 0.455, winRear = 0.278, winFrnt = 0.660, bpX = winRear + (winFrnt - winRear) * 0.50;
   ctx.fillStyle = glass;
   ctx.fillRect(px(winRear+0.008), py(roofAtX(winRear)+0.015), px(bpX-0.010)-px(winRear+0.008), py(beltY)-py(roofAtX(winRear)+0.015));
   ctx.fillRect(px(bpX+0.010), py(roofAtX(bpX)+0.008), px(winFrnt-0.008)-px(bpX+0.010), py(beltY)-py(roofAtX(bpX)+0.008));
@@ -880,7 +879,7 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.fillRect(px(bpX-0.012), py(roofAtX(bpX)+0.008), px(bpX+0.012)-px(bpX-0.012), py(beltY)-py(roofAtX(bpX)+0.008));
 
   ctx.strokeStyle = 'rgba(195,188,168,0.50)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(px(0.06),py(beltY)); ctx.lineTo(px(0.62),py(beltY)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px(0.06),py(beltY)); ctx.lineTo(px(0.72),py(beltY)); ctx.stroke();
 
   // taillights
   ctx.shadowColor = '#ff0000'; ctx.shadowBlur = hit ? 12 : 8;
