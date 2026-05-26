@@ -66,6 +66,58 @@ async function resolveJettonWalletAddr(owner) {
   return addr;
 }
 
+// ─── On-chain confirmation polling ───────────────────────────────────────────
+
+/**
+ * Returns the LT (logical time) of the most recent transaction on the escrow
+ * contract. Used as a baseline before sending so we can detect the new tx.
+ */
+export async function getEscrowLatestLt() {
+  try {
+    const res  = await fetch(
+      `${TONCENTER_BASE}/getTransactions?${new URLSearchParams({ address: ESCROW_ADDRESS, limit: '1' })}`,
+    );
+    const data = await res.json();
+    const lt   = data.result?.[0]?.transaction_id?.lt ?? '0';
+    console.log('[jetton] escrow baseline LT:', lt);
+    return lt;
+  } catch (e) {
+    console.warn('[jetton] getEscrowLatestLt failed:', e.message);
+    return '0';
+  }
+}
+
+/**
+ * Poll the escrow contract until a transaction with LT > preLt appears.
+ * Returns true when confirmed, false on timeout.
+ */
+export async function waitForEscrowDeposit(preLt, { timeoutMs = 30_000, pollMs = 3_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  const baseline = BigInt(preLt || '0');
+  console.log('[jetton] polling escrow for deposit confirmation, baseline LT:', preLt);
+
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, pollMs));
+    try {
+      const res  = await fetch(
+        `${TONCENTER_BASE}/getTransactions?${new URLSearchParams({ address: ESCROW_ADDRESS, limit: '3' })}`,
+      );
+      const data = await res.json();
+      const txs  = Array.isArray(data.result) ? data.result : [];
+      const latestLt = txs[0]?.transaction_id?.lt;
+      console.log('[jetton] escrow LT now:', latestLt, '| need >', baseline.toString());
+      if (latestLt && BigInt(latestLt) > baseline) {
+        console.log('[jetton] deposit confirmed on-chain!');
+        return true;
+      }
+    } catch (e) {
+      console.warn('[jetton] escrow poll error:', e.message);
+    }
+  }
+  console.warn('[jetton] deposit confirmation timed out after', timeoutMs, 'ms');
+  return false;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /** Returns the user's jetton wallet address string, or null if none. */

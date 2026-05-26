@@ -5,7 +5,7 @@ import { fetchLobbies, createLobby, joinLobby } from '../../api/lobbies.js';
 import { fetchRace } from '../../api/races.js';
 import { useMainButton, haptic, tgUser } from '../../lib/telegram.js';
 import { formatLada, ladaToNano, shortAddress } from '../../lib/format.js';
-import { buildLobbyDeposit } from '../../blockchain/jetton.js';
+import { buildLobbyDeposit, getEscrowLatestLt, waitForEscrowDeposit } from '../../blockchain/jetton.js';
 import { useTonSender } from '../../blockchain/tonConnect.js';
 
 const PLAYER_OPTIONS = [2, 3, 4, 5];
@@ -17,6 +17,7 @@ export default function PlayTab({ balance = null }) {
   const [stake, setStake] = useState('10');
   const [minPlayers, setMinPlayers] = useState(2);
   const [sending, setSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState('');   // user-facing progress message
   const [myPendingLobbyId, setMyPendingLobbyId] = useState(null);
   const address = useTonAddress();
   const { send } = useTonSender();
@@ -67,8 +68,14 @@ export default function PlayTab({ balance = null }) {
   async function handleCreate() {
     if (!stakeValid) return;
     setSending(true);
+    setSendStatus('Preparing transaction…');
     try {
       haptic.medium();
+
+      // Step 1 — snapshot the escrow LT before any tx so we can detect our deposit
+      const preLt = await getEscrowLatestLt();
+
+      // Step 2 — reserve a lobby slot in the DB (pending state, no players yet)
       const lobby = await createLobby({
         stake: stakeNano.toString(),
         creator: address,
@@ -77,16 +84,24 @@ export default function PlayTab({ balance = null }) {
         maxPlayers: 5,
       });
 
-      // Send LADA deposit to escrow with lobby ID as the comment
+      // Step 3 — build & send the jetton deposit tx
+      setSendStatus('Approve in your wallet…');
       const tx = await buildLobbyDeposit({ owner: address, amount: stakeNano, lobbyId: lobby.id });
       await send(tx);
 
+      // Step 4 — wait for the tx to land on-chain before we let the UI proceed
+      setSendStatus('Confirming on-chain…');
+      const confirmed = await waitForEscrowDeposit(preLt, { timeoutMs: 60_000 });
+      if (!confirmed) throw new Error('Transaction not confirmed within 60 s — check your wallet and try again.');
+
       setCreating(false);
       haptic.success();
+      setSendStatus('');
       setMyPendingLobbyId(lobby.id);
       refresh();
     } catch (e) {
       haptic.error();
+      setSendStatus('');
       alert(e.message);
     } finally {
       setSending(false);
@@ -94,12 +109,34 @@ export default function PlayTab({ balance = null }) {
   }
 
   async function handleJoin(lobby) {
+    setSending(true);
+    setSendStatus('Preparing transaction…');
     try {
       haptic.medium();
+
+      // Step 1 — snapshot escrow LT before tx
+      const preLt = await getEscrowLatestLt();
+
+      // Step 2 — send deposit first; lobbyId is the comment so the indexer knows
+      setSendStatus('Approve in your wallet…');
+      const tx = await buildLobbyDeposit({
+        owner: address,
+        amount: BigInt(lobby.stake),
+        lobbyId: lobby.id,
+      });
+      await send(tx);
+
+      // Step 3 — wait for on-chain confirmation
+      setSendStatus('Confirming on-chain…');
+      const confirmed = await waitForEscrowDeposit(preLt, { timeoutMs: 60_000 });
+      if (!confirmed) throw new Error('Transaction not confirmed within 60 s — check your wallet and try again.');
+
+      // Step 4 — register the join in the backend
+      setSendStatus('Joining lobby…');
       const result = await joinLobby(lobby.id, address, username);
       haptic.success();
-      // If the join triggered a race auto-start, navigate straight in.
-      // Otherwise just refresh and stay on the lobby list.
+      setSendStatus('');
+
       if (result?.raceStarted) {
         navigate(`/race/${lobby.id}`);
       } else {
@@ -107,7 +144,10 @@ export default function PlayTab({ balance = null }) {
       }
     } catch (e) {
       haptic.error();
+      setSendStatus('');
       alert(e.message);
+    } finally {
+      setSending(false);
     }
   }
 
@@ -168,12 +208,17 @@ export default function PlayTab({ balance = null }) {
             </div>
           </div>
 
+          {sendStatus && (
+            <div style={{ color: 'var(--accent-2)', fontSize: 13, marginBottom: 8, textAlign: 'center' }}>
+              {sendStatus}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn--ghost" disabled={sending} onClick={() => setCreating(false)}>
               Cancel
             </button>
             <button className="btn" disabled={!stakeValid || sending} onClick={handleCreate}>
-              {sending ? 'Sending…' : 'Confirm & deposit'}
+              {sending ? '…' : 'Confirm & deposit'}
             </button>
           </div>
         </div>
@@ -201,7 +246,7 @@ export default function PlayTab({ balance = null }) {
             <button
               className="btn btn--small"
               onClick={() => handleJoin(l)}
-              disabled={l.creator === address || l.players >= l.maxPlayers}
+              disabled={l.creator === address || l.players >= l.maxPlayers || sending}
             >
               {l.creator === address ? 'Yours' : 'Join'}
             </button>

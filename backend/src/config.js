@@ -7,6 +7,7 @@ export const config = {
     apiKey: process.env.TONCENTER_API_KEY,
     escrowAddress: process.env.ESCROW_CONTRACT_ADDRESS,
     houseWallet: process.env.HOUSE_WALLET_ADDRESS,
+    houseWalletMnemonic: process.env.HOUSE_WALLET_MNEMONIC,
     ladaJettonMaster: process.env.LADA_JETTON_MASTER,
   },
   telegram: {
