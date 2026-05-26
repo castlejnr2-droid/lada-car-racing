@@ -14,7 +14,7 @@
  *   TONCENTER_API_KEY       — optional but recommended (rate-limit avoidance)
  */
 import { Address, beginCell, toNano, internal } from '@ton/core';
-import { TonClient, WalletContractV4 } from '@ton/ton';
+import { TonClient, WalletContractV5R1 } from '@ton/ton';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { config } from '../config.js';
 
@@ -52,10 +52,10 @@ async function getHouseWallet() {
   }
 
   _keyPair = await mnemonicToPrivateKey(words);
-  _wallet  = WalletContractV4.create({ publicKey: _keyPair.publicKey, workchain: 0 });
+  _wallet  = WalletContractV5R1.create({ publicKey: _keyPair.publicKey, workchain: 0 });
 
   const walletAddr = _wallet.address.toString({ urlSafe: true, bounceable: false });
-  console.log('[housePayout] house wallet address:', walletAddr);
+  console.log('[housePayout] derived house wallet address (V5R1):', walletAddr);
   return { wallet: _wallet, keyPair: _keyPair };
 }
 
