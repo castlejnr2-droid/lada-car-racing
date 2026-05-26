@@ -1,15 +1,22 @@
 /**
  * Lada jetton helpers.
  *
- * Sending a jetton works by calling YOUR jetton wallet (not the recipient's,
- * and not the master). We look up the user's jetton wallet via TonAPI, then
- * build a TEP-74 transfer with the escrow contract as the destination and
- * the race ID in the forwardPayload.
+ * Balance lookup uses a two-step on-chain get-method chain (same approach as
+ * the backend indexer):
+ *   1. jetton master  . get_wallet_address(owner) → jetton wallet address
+ *   2. jetton wallet  . get_wallet_data()         → [balance, ...]
+ *
+ * Primary: Toncenter v2 runGetMethod.  Fallback: TonAPI v2 REST.
  */
-import { Address, beginCell, toNano } from '@ton/core';
+import { Address, beginCell, Cell, toNano } from '@ton/core';
 
 const JETTON_TRANSFER_OP = 0x0f8a7ea5;
-const TONAPI_BASE = import.meta.env.VITE_TON_NETWORK === 'mainnet'
+
+const NETWORK = import.meta.env.VITE_TON_NETWORK || 'mainnet';
+const TONCENTER_BASE = NETWORK === 'mainnet'
+  ? 'https://toncenter.com/api/v2'
+  : 'https://testnet.toncenter.com/api/v2';
+const TONAPI_BASE = NETWORK === 'mainnet'
   ? 'https://tonapi.io'
   : 'https://testnet.tonapi.io';
 
@@ -19,26 +26,125 @@ const LADA_MASTER    = import.meta.env.VITE_LADA_JETTON_MASTER
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_CONTRACT_ADDRESS
   || 'EQDjkkULU_3fxlbrR_kSVsogIi9ifxJ44aWoNHT1zr5ZVLPZ';
 
-/** Returns the jetton wallet address for `owner` (a TON address string). */
-export async function getUserJettonWallet(owner) {
-  if (!LADA_MASTER) throw new Error('VITE_LADA_JETTON_MASTER not configured');
-  const url = `${TONAPI_BASE}/v2/accounts/${encodeURIComponent(owner)}/jettons/${encodeURIComponent(LADA_MASTER)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`TonAPI jetton lookup → ${res.status}`);
-  const data = await res.json();
-  return data.wallet_address?.address || data.jetton_wallet_address;
+// ─── Toncenter helpers ────────────────────────────────────────────────────────
+
+async function runGetMethod(address, method, stack = []) {
+  const res = await fetch(`${TONCENTER_BASE}/runGetMethod`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address, method, stack }),
+  });
+  return res.json();  // { ok, result: { stack, exit_code, ... } }
 }
 
-/** Returns the user's Lada balance as a BigInt of nano-LADA. */
-export async function getLadaBalance(owner) {
-  if (!LADA_MASTER) return 0n;
+/**
+ * Resolve the jetton wallet address for `owner` using Toncenter get_wallet_address.
+ * Returns an Address object.
+ */
+async function resolveJettonWalletAddr(owner) {
+  const ownerBoc = beginCell()
+    .storeAddress(Address.parse(owner))
+    .endCell()
+    .toBoc()
+    .toString('base64');
+
+  console.log('[jetton] get_wallet_address — master:', LADA_MASTER, '| owner:', owner);
+  const r = await runGetMethod(LADA_MASTER, 'get_wallet_address', [
+    ['slice', { bytes: ownerBoc }],
+  ]);
+  console.log('[jetton] get_wallet_address raw response:', JSON.stringify(r).slice(0, 300));
+
+  if (!r.ok) throw new Error(`Toncenter get_wallet_address: ok=false — ${r.error}`);
+  if (r.result?.exit_code !== 0) throw new Error(`get_wallet_address exit_code=${r.result?.exit_code}`);
+
+  const entry  = r.result.stack?.[0];
+  const cellB64 = entry?.[1]?.bytes ?? (typeof entry?.[1] === 'string' ? entry[1] : null);
+  if (!cellB64) throw new Error('get_wallet_address: no cell in stack — ' + JSON.stringify(entry));
+
+  const addr = Cell.fromBase64(cellB64).beginParse().loadAddress();
+  console.log('[jetton] resolved jetton wallet:', addr.toString());
+  return addr;
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/** Returns the user's jetton wallet address string, or null if none. */
+export async function getUserJettonWallet(owner) {
   try {
+    const addr = await resolveJettonWalletAddr(owner);
+    return addr.toString();
+  } catch (e) {
+    console.warn('[jetton] getUserJettonWallet failed:', e.message);
+    // Fallback: TonAPI
     const url = `${TONAPI_BASE}/v2/accounts/${encodeURIComponent(owner)}/jettons/${encodeURIComponent(LADA_MASTER)}`;
-    const res = await fetch(url);
-    if (!res.ok) return 0n;
+    console.log('[jetton] TonAPI wallet lookup fallback:', url);
+    const res  = await fetch(url);
     const data = await res.json();
-    return BigInt(data.balance ?? '0');
-  } catch { return 0n; }
+    console.log('[jetton] TonAPI wallet response:', JSON.stringify(data).slice(0, 200));
+    return data.wallet_address?.address ?? data.jetton_wallet_address ?? null;
+  }
+}
+
+/**
+ * Returns the user's LADA balance as a BigInt of nano-LADA (9 decimals).
+ * Tries Toncenter get_wallet_address → get_wallet_data first;
+ * falls back to TonAPI v2 REST if anything fails.
+ */
+export async function getLadaBalance(owner) {
+  if (!owner) return 0n;
+  try {
+    return await getLadaBalanceToncenter(owner);
+  } catch (e) {
+    console.warn('[jetton] Toncenter balance failed, trying TonAPI fallback:', e.message);
+    return getLadaBalanceTonAPI(owner);
+  }
+}
+
+async function getLadaBalanceToncenter(owner) {
+  // Step 1: resolve jetton wallet
+  const walletAddr = await resolveJettonWalletAddr(owner);
+  const walletStr  = walletAddr.toString();
+
+  // Step 2: get_wallet_data → stack[0] is balance (num)
+  console.log('[jetton] get_wallet_data — wallet:', walletStr);
+  const r = await runGetMethod(walletStr, 'get_wallet_data', []);
+  console.log('[jetton] get_wallet_data raw response:', JSON.stringify(r).slice(0, 300));
+
+  if (!r.ok) throw new Error(`Toncenter get_wallet_data: ok=false — ${r.error}`);
+  // exit_code -13 = account uninitialised (no tokens yet) → balance is 0
+  if (r.result?.exit_code === -13 || r.result?.exit_code === 13) {
+    console.log('[jetton] jetton wallet uninitialised — balance is 0');
+    return 0n;
+  }
+  if (r.result?.exit_code !== 0) throw new Error(`get_wallet_data exit_code=${r.result?.exit_code}`);
+
+  const balEntry = r.result.stack?.[0];
+  console.log('[jetton] balance stack entry:', balEntry);
+  if (!balEntry || balEntry[0] !== 'num') throw new Error('Unexpected balance stack type: ' + JSON.stringify(balEntry));
+
+  const nano = BigInt(balEntry[1]);
+  console.log('[jetton] balance (nano-LADA):', nano.toString(), '| LADA:', Number(nano / 1_000_000_000n));
+  return nano;
+}
+
+async function getLadaBalanceTonAPI(owner) {
+  const url = `${TONAPI_BASE}/v2/accounts/${encodeURIComponent(owner)}/jettons/${encodeURIComponent(LADA_MASTER)}`;
+  console.log('[jetton] TonAPI balance fetch:', url);
+  try {
+    const res  = await fetch(url);
+    const data = await res.json();
+    console.log('[jetton] TonAPI balance response:', JSON.stringify(data).slice(0, 300));
+    if (!res.ok) {
+      console.warn('[jetton] TonAPI balance error:', data);
+      return 0n;
+    }
+    const nano = BigInt(data.balance ?? '0');
+    console.log('[jetton] TonAPI balance (nano-LADA):', nano.toString(), '| LADA:', Number(nano / 1_000_000_000n));
+    return nano;
+  } catch (e) {
+    console.error('[jetton] TonAPI balance fetch threw:', e.message);
+    return 0n;
+  }
 }
 
 /**
