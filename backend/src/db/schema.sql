@@ -78,10 +78,9 @@ CREATE TABLE IF NOT EXISTS races (
   commit_deadline  TIMESTAMPTZ,
   reveal_deadline  TIMESTAMPTZ,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-  finished_at      TIMESTAMPTZ,
-  CONSTRAINT races_state_chk CHECK (state IN (
-    'awaiting_deposits','settled','refunded'
-  ))
+  finished_at      TIMESTAMPTZ
+  -- NOTE: races_state_chk constraint is applied below (after the legacy
+  -- row cleanup UPDATE), not inline here.
 );
 
 CREATE INDEX IF NOT EXISTS idx_races_state        ON races(state);
@@ -143,8 +142,12 @@ ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS username TEXT;
 ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS min_players INT NOT NULL DEFAULT 2;
 ALTER TABLE lobbies ALTER COLUMN max_players SET DEFAULT 5;
 
--- v2: owner-payout model — only two active states now.
--- Drop and recreate the constraint idempotently.
+-- v2: owner-payout model — only three states now.
+-- Clean up any legacy commit-reveal states FIRST, then enforce the constraint.
+UPDATE races
+   SET state = 'refunded'
+ WHERE state NOT IN ('awaiting_deposits', 'settled', 'refunded');
+
 ALTER TABLE races DROP CONSTRAINT IF EXISTS races_state_chk;
 ALTER TABLE races ADD CONSTRAINT races_state_chk CHECK (state IN (
   'awaiting_deposits','settled','refunded'
