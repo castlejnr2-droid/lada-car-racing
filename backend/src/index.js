@@ -59,6 +59,14 @@ async function boot() {
     await pool.query(`ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS min_players INT NOT NULL DEFAULT 2`);
     await pool.query(`ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS max_players INT NOT NULL DEFAULT 5`);
     await pool.query(`ALTER TABLE races ADD COLUMN IF NOT EXISTS combined_seed TEXT`);
+    // Migrate legacy commit-reveal states to 'refunded' before enforcing the
+    // new simplified constraint. Races stuck in awaiting_commits / awaiting_reveals
+    // / active from the old flow are treated as cancelled/refunded.
+    await pool.query(`
+      UPDATE races
+         SET state = 'refunded'
+       WHERE state NOT IN ('awaiting_deposits', 'settled', 'refunded')
+    `);
     await pool.query(`ALTER TABLE races DROP CONSTRAINT IF EXISTS races_state_chk`);
     await pool.query(`ALTER TABLE races ADD CONSTRAINT races_state_chk CHECK (state IN (
       'awaiting_deposits','settled','refunded'
