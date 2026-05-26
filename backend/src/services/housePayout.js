@@ -163,15 +163,3 @@ export async function createRaceOnChain({ raceId, stake, player1, player2, escro
   });
 }
 
-/**
- * No-op alias kept so existing call-sites compile. The escrow contract settles
- * automatically on the second RevealSecret — there is no external payout trigger.
- * Log a warning if this is called so we know the old path is still being hit.
- */
-export async function releaseToWinner({ winnerAddress, pot }) {
-  console.warn(
-    '[housePayout] releaseToWinner() called but the contract has no DeclareWinner op. ' +
-    'Settlement is automatic via RevealSecret. Winner:', winnerAddress,
-    '| pot:', pot,
-  );
-}

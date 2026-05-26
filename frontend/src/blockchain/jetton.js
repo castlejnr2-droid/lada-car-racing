@@ -200,17 +200,18 @@ async function getLadaBalanceTonAPI(owner) {
 }
 
 /**
- * Build the TonConnect tx for depositing `amount` nano-LADA into the escrow,
- * with `raceIdOnChain` encoded in the forward payload so the contract
- * credits the deposit to the right race.
+ * Build the TonConnect tx for depositing `amount` nano-LADA into the escrow.
+ *
+ * The contract's TokenNotification handler reads `forwardPayload: Slice as remaining`
+ * and expects the first 64 bits to be the uint64 raceId — no Either-discriminant
+ * prefix.  Storing the raceId inline (without storeBit/storeRef) puts exactly
+ * 64 bits into the remaining slice after the jetton wallet forwards the notification.
  */
 export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   if (!ESCROW_ADDRESS) throw new Error('VITE_ESCROW_CONTRACT_ADDRESS not configured');
   const userJettonWallet = await getUserJettonWallet(owner);
   if (!userJettonWallet) throw new Error('You have no Lada jetton wallet yet — buy some LADA first.');
 
-  const forwardPayload = beginCell().storeUint(BigInt(raceIdOnChain), 64).endCell();
-
   const body = beginCell()
     .storeUint(JETTON_TRANSFER_OP, 32)
     .storeUint(0n, 64)                                        // query id
@@ -219,45 +220,9 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
     .storeAddress(Address.parse(owner))                       // response_destination
     .storeBit(0)                                              // no custom_payload
     .storeCoins(toNano('0.05'))                               // forward_ton_amount
-    .storeBit(1)                                              // forward_payload as ref
-    .storeRef(forwardPayload)
-    .endCell();
-
-  return {
-    validUntil: Math.floor(Date.now() / 1000) + 360,
-    messages: [{
-      address: userJettonWallet,
-      amount: toNano('0.1').toString(),
-      payload: body.toBoc().toString('base64'),
-    }],
-  };
-}
-
-/**
- * Build a jetton deposit tx at lobby-creation time.
- * Uses a text comment forward-payload carrying the lobby ID so the
- * escrow contract (and the indexer) can identify which lobby this funds.
- */
-export async function buildLobbyDeposit({ owner, amount, lobbyId }) {
-  const userJettonWallet = await getUserJettonWallet(owner);
-  if (!userJettonWallet) throw new Error('You have no Lada jetton wallet yet — buy some LADA first.');
-
-  // TEP-74 text-comment forward payload (op 0x00000000 + UTF-8 string)
-  const forwardPayload = beginCell()
-    .storeUint(0, 32)
-    .storeStringTail(String(lobbyId))
-    .endCell();
-
-  const body = beginCell()
-    .storeUint(JETTON_TRANSFER_OP, 32)
-    .storeUint(0n, 64)                                        // query id
-    .storeCoins(BigInt(amount))
-    .storeAddress(Address.parse(ESCROW_ADDRESS))              // destination
-    .storeAddress(Address.parse(owner))                       // response_destination
-    .storeBit(0)                                              // no custom_payload
-    .storeCoins(toNano('0.05'))                               // forward_ton_amount
-    .storeBit(1)                                              // forward_payload as ref
-    .storeRef(forwardPayload)
+    // forward_payload: inline uint64 raceId — no Either prefix so the contract
+    // receives exactly 64 bits as forwardPayload.loadUint(64).
+    .storeUint(BigInt(raceIdOnChain), 64)
     .endCell();
 
   return {

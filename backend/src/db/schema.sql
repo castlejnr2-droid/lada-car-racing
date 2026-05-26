@@ -135,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_house_fees_withdrawn  ON house_fees(withdrawn);
 CREATE INDEX IF NOT EXISTS idx_house_fees_collected  ON house_fees(collected_at DESC);
 
 -- PATCHED-MIN-PLAYERS
+ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS username TEXT;
 
 -- ─────────────────────────────────────────────────────────────────────
 --  Idempotent migrations for older databases
