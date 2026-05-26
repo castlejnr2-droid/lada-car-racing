@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import { query } from '../db/pool.js';
-import { releaseToWinner } from '../services/housePayout.js';
+import { createRaceOnChain } from '../services/housePayout.js';
 
 // ─── Physics simulation (mirrors frontend/src/game/rng.js + physics.js) ──────
 // Kept in sync by design — both files use the same constants and algorithm.
@@ -333,15 +333,15 @@ async function autoStartRace(lobby, _memberCount) {
   const row = inserted.rows[0] || (await query(`SELECT * FROM races WHERE id = $1`, [lobby.id])).rows[0];
   console.log(`[autoStartRace] done, race.id=${row?.id} state=${row?.state}`);
 
-  // Trigger the on-chain escrow payout.  Fire-and-forget so the HTTP response
-  // isn't blocked on the blockchain round-trip.  Errors are logged in housePayout.
-  releaseToWinner({
-    onChainRaceId: onChainId.toString(),
-    winnerAddress:  winner,
-    pot:            pot.toString(),
-    winnerPayout:   winnerPayout.toString(),
+  // Register the race on-chain so the escrow contract knows the raceId,
+  // stake, and players before deposits arrive.  Fire-and-forget; errors logged.
+  createRaceOnChain({
+    raceId:  onChainId.toString(),
+    stake:   stake.toString(),
+    player1: p1,
+    player2: p2,
   }).catch((err) => {
-    console.error(`[autoStartRace] releaseToWinner FAILED for race ${row?.id}:`, err.message);
+    console.error(`[autoStartRace] createRaceOnChain FAILED for race ${row?.id}:`, err.message);
   });
 
   return row;
