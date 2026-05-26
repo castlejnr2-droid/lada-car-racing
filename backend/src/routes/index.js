@@ -5,6 +5,7 @@ import playersRouter from './players.js';
 import leaderboardRouter from './leaderboard.js';
 import houseRouter from './house.js';
 import webhookRouter from './webhook.js';
+import botRouter from './bot.js';
 
 const router = Router();
 
@@ -14,5 +15,6 @@ router.use('/players',     playersRouter);
 router.use('/leaderboard', leaderboardRouter);
 router.use('/house',       houseRouter);
 router.use('/webhook',     webhookRouter);
+router.use('/bot',         botRouter);
 
 export default router;

@@ -24,6 +24,24 @@ app.use((err, _req, res, _next) => {
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = '0.0.0.0';
 
+async function registerBotWebhook() {
+  const { botToken, webhookUrl, webhookSecret } = config.telegram;
+  if (!botToken || !webhookUrl) return;
+  const body = { url: webhookUrl };
+  if (webhookSecret) body.secret_token = webhookSecret;
+  const res  = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (json.ok) {
+    console.log(`[bot] webhook registered → ${webhookUrl}`);
+  } else {
+    console.warn('[bot] setWebhook failed:', json.description);
+  }
+}
+
 async function boot() {
   // Run schema migrations before accepting traffic. Migrations are idempotent
   // (CREATE TABLE IF NOT EXISTS) so this is safe on every boot.
@@ -54,6 +72,8 @@ async function boot() {
     console.log(`[lada-backend] listening on ${HOST}:${PORT}  (env PORT=${process.env.PORT || 'unset'})`);
     // Indexer runs in-process for the MVP. Fire-and-forget; it polls TonAPI.
     startIndexer().catch((e) => console.error('[indexer] failed to start', e));
+    // Register Telegram webhook if both token and target URL are configured.
+    registerBotWebhook().catch((e) => console.error('[bot] webhook registration failed', e));
   });
 }
 
