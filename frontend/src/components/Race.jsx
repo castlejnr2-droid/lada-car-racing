@@ -56,6 +56,7 @@ export default function Race() {
   useEffect(() => {
     if (!(race?.state === 'settled' || race?.state === 'active')) return;
     if (!race.combined_seed || !canvasEl) return;
+    const shortAddr = (a) => a ? `${a.slice(0, 4)}…${a.slice(-4)}` : '???';
     replayStopRef.current = runReplay(canvasEl, race.combined_seed, {
       onComplete: () => {
         setReplayDone(true);
@@ -63,6 +64,10 @@ export default function Race() {
         clearSecret(raceId);
       },
       getViewMode: () => viewModeRef.current,
+      playerNames: [
+        race.player1_username || shortAddr(race.player1),
+        race.player2_username || shortAddr(race.player2),
+      ],
     });
     return () => replayStopRef.current?.();
   }, [race?.state, race?.combined_seed, canvasEl, raceId]);

@@ -49,7 +49,7 @@ const CAR_COLORS = [
 ];
 
 // ─── entry point ─────────────────────────────────────────────────────────────
-export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = () => 'side' } = {}) {
+export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = () => 'side', playerNames = [] } = {}) {
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
 
@@ -211,7 +211,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     } else {
       drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                 sim, state, scenery, scrollX, physTick, endFrame,
-                carX, finishLineX, sim.winner, flashOn, celebFrame, confetti);
+                carX, finishLineX, sim.winner, flashOn, celebFrame, confetti, playerNames);
     }
 
     // Side-view completion (front view handles its own above)
@@ -256,7 +256,7 @@ function buildScenery(rng, W) {
 // ─── SIDE VIEW frame ─────────────────────────────────────────────────────────
 function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                    sim, state, scenery, scrollX, physTick, endFrame,
-                   carX, finishLineX, winnerIdx, flashOn, celebFrame, confetti) {
+                   carX, finishLineX, winnerIdx, flashOn, celebFrame, confetti, playerNames) {
   ctx.clearRect(0, 0, W, H);
   drawSky(ctx, W, SKY_H, scrollX, scenery.buildings);
   drawTrees(ctx, W, SKY_H, TREE_H, scrollX, scenery.trees);
@@ -270,10 +270,29 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
       ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.65
       : 0;
     const stopped = celebFrame >= 0 && i !== winnerIdx;
-    drawLada(ctx, carX[i], baseY + bounce, CAR_W, CAR_H,
+    const carY = baseY + bounce;
+    drawLada(ctx, carX[i], carY, CAR_W, CAR_H,
              CAR_COLORS[i % CAR_COLORS.length],
              stopped ? 0 : state.speeds[i], state.hits[i],
              i === winnerIdx && flashOn);
+
+    // Player name above car
+    const name = playerNames[i];
+    if (name) {
+      const label = name.length > 10 ? name.slice(0, 10) : name;
+      const fontSize = Math.max(9, Math.round(CAR_H * 0.38));
+      const nameY = carY - CAR_H * 0.85;
+      ctx.save();
+      ctx.font = `bold ${fontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(carX[i] - tw / 2 - 3, nameY - fontSize - 1, tw + 6, fontSize + 3);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, carX[i], nameY);
+      ctx.restore();
+    }
   }
   if (celebFrame >= 0 && celebFrame < 50) {
     const winY = ROAD_Y + (winnerIdx + 0.54) * LANE_H;
@@ -880,6 +899,18 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
 
   ctx.strokeStyle = 'rgba(195,188,168,0.50)'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(px(0.06),py(beltY)); ctx.lineTo(px(0.72),py(beltY)); ctx.stroke();
+
+  // LADA badge — centred on door panel between wheels
+  const badgeCX = (rWX + fWX) / 2;
+  const badgeY  = py(0.62);
+  const badgeFontSize = Math.max(6, Math.round(CW * 0.072));
+  ctx.save();
+  ctx.font = `bold ${badgeFontSize}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,0.82)';
+  ctx.fillText('LADA', badgeCX, badgeY);
+  ctx.restore();
 
   // taillights
   ctx.shadowColor = '#ff0000'; ctx.shadowBlur = hit ? 12 : 8;
