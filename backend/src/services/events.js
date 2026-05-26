@@ -6,7 +6,6 @@
  * don't double-credit a player or double-record a fee.
  */
 import { query } from '../db/pool.js';
-import { releaseToWinner } from './housePayout.js';
 
 /**
  * Record a tx row. Returns false if we've already seen this (tx_hash, type) pair.
@@ -117,27 +116,6 @@ export async function handleReveal(e) {
       WHERE id = $1`,
     [raceId, e.player],
   );
-
-  // If both players have now revealed, trigger the on-chain payout
-  const { rows } = await query(
-    `SELECT on_chain_id, winner
-       FROM races
-      WHERE id = $1
-        AND player1_revealed AND player2_revealed
-        AND state = 'awaiting_reveals'`,
-    [raceId],
-  );
-  if (rows.length > 0) {
-    const { on_chain_id, winner } = rows[0];
-    if (winner) {
-      console.log(`[events] both revealed — triggering payout | race=${on_chain_id} | winner=${winner}`);
-      releaseToWinner({ onChainRaceId: on_chain_id, winnerAddress: winner }).catch((err) => {
-        console.error('[events] releaseToWinner failed:', err.message);
-      });
-    } else {
-      console.warn(`[events] both revealed but no winner set yet on race ${raceId} — payout skipped`);
-    }
-  }
 
   return { ok: true };
 }

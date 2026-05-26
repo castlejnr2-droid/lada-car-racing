@@ -1,6 +1,82 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import { query } from '../db/pool.js';
+import { releaseToWinner } from '../services/housePayout.js';
+
+// ─── Physics simulation (mirrors frontend/src/game/rng.js + physics.js) ──────
+// Kept in sync by design — both files use the same constants and algorithm.
+
+function createRng(seed) {
+  let a = seed >>> 0;
+  return function rng() {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seedFromHex(hex) {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  let acc = 0;
+  for (let i = 0; i < clean.length; i += 8) {
+    acc ^= parseInt(clean.slice(i, i + 8).padEnd(8, '0'), 16) >>> 0;
+  }
+  return acc >>> 0;
+}
+
+const TRACK_LENGTH      = 1200;
+const POTHOLES_PER_LANE = 14;
+const BASE_SPEED        = 6;
+const POTHOLE_PENALTY   = 0.35;
+const POTHOLE_HIT_RADIUS = 5;
+const MAX_TICKS         = 600;
+
+function buildTrack(rng, laneCount) {
+  const lanes = [];
+  for (let l = 0; l < laneCount; l++) {
+    const potholes = [];
+    for (let i = 0; i < POTHOLES_PER_LANE; i++) {
+      potholes.push(80 + Math.floor(rng() * (TRACK_LENGTH - 80)));
+    }
+    lanes.push({ potholes: potholes.sort((a, b) => a - b) });
+  }
+  return { length: TRACK_LENGTH, lanes };
+}
+
+/**
+ * Run the deterministic race simulation and return the index of the winner.
+ * Mirrors the frontend simulate() exactly so the visual replay always matches.
+ * Winner = car with highest final position (first to cross the finish line
+ * gets the extra speed-distance beyond TRACK_LENGTH; trailing car stops there).
+ */
+function simulateWinner(track, rng) {
+  const positions = track.lanes.map(() => 0);
+  const speeds    = track.lanes.map(() => 0);
+  const hitFlags  = track.lanes.map(() => false);
+  let tick = 0;
+
+  while (positions.some((p) => p < track.length) && tick < MAX_TICKS) {
+    track.lanes.forEach((lane, i) => {
+      if (positions[i] >= track.length) { speeds[i] = 0; hitFlags[i] = false; return; }
+      const onPothole = lane.potholes.some((p) => Math.abs(p - positions[i]) < POTHOLE_HIT_RADIUS);
+      const jitter = 0.85 + rng() * 0.3;
+      const speed = BASE_SPEED * (onPothole ? POTHOLE_PENALTY : 1) * jitter;
+      positions[i] += speed;
+      speeds[i] = speed;
+      hitFlags[i] = onPothole;
+    });
+    tick++;
+  }
+
+  // Whoever has the higher final position crossed first (or went furthest in MAX_TICKS)
+  let winnerIdx = 0;
+  for (let i = 1; i < positions.length; i++) {
+    if (positions[i] > positions[winnerIdx]) winnerIdx = i;
+  }
+  return winnerIdx;
+}
 
 const router = Router();
 
@@ -197,10 +273,16 @@ async function autoStartRace(lobby, _memberCount) {
   // Generate combined_seed as random 256-bit hex
   const combinedSeed = '0x' + crypto.randomBytes(32).toString('hex');
 
-  // Pick winner: parity bit of the seed
-  const winnerIsP2 = (BigInt(combinedSeed) & 1n) === 1n;
-  const winner = winnerIsP2 ? p2 : p1;
-  const loser  = winnerIsP2 ? p1 : p2;
+  // Pick winner by running the same deterministic physics simulation the
+  // frontend replay uses.  This guarantees the visual result always matches
+  // the declared winner — no parity-bit shortcut that could produce the wrong answer.
+  const rng   = createRng(seedFromHex(combinedSeed));
+  const track = buildTrack(rng, 2);
+  const winnerIdx = simulateWinner(track, rng);
+  const players = [p1, p2];
+  const winner  = players[winnerIdx];
+  const loser   = players[1 - winnerIdx];
+  console.log(`[autoStartRace] simulation winner: idx=${winnerIdx} addr=${winner}`);
 
   // Pot = stake * memberCount (in nano-LADA, BigInt-safe via string math)
   const stake = BigInt(lobby.stake);
@@ -208,24 +290,28 @@ async function autoStartRace(lobby, _memberCount) {
   const houseFee = (pot * 500n) / 10000n;       // 5%
   const winnerPayout = pot - houseFee;
 
-  console.log(`[autoStartRace] inserting race with state=active winner=${winner}`);
+  // Use epoch-milliseconds as the on_chain_id (numeric ID for the escrow call).
+  // This is unique enough for our purposes since races are created serially.
+  const onChainId = BigInt(Date.now());
+
+  console.log(`[autoStartRace] inserting race with state=active winner=${winner} on_chain_id=${onChainId}`);
   let inserted;
   try {
     // Insert the race with id = lobby.id (so /race/:lobbyId resolves)
     inserted = await query(
       `INSERT INTO races (
-         id, lobby_id, player1, player2, stake, pot, state,
+         id, lobby_id, on_chain_id, player1, player2, stake, pot, state,
          winner, loser, combined_seed,
          winner_payout, house_fee, finished_at
        ) VALUES (
-         $1, $1, $2, $3, $4, $5, 'active',
-         $6, $7, $8,
-         $9, $10, now()
+         $1, $1, $2, $3, $4, $5, $6, 'active',
+         $7, $8, $9,
+         $10, $11, now()
        )
        ON CONFLICT (id) DO NOTHING
        RETURNING *`,
       [
-        lobby.id, p1, p2,
+        lobby.id, onChainId.toString(), p1, p2,
         stake.toString(), pot.toString(),
         winner, loser, combinedSeed,
         winnerPayout.toString(), houseFee.toString(),
@@ -246,6 +332,18 @@ async function autoStartRace(lobby, _memberCount) {
 
   const row = inserted.rows[0] || (await query(`SELECT * FROM races WHERE id = $1`, [lobby.id])).rows[0];
   console.log(`[autoStartRace] done, race.id=${row?.id} state=${row?.state}`);
+
+  // Trigger the on-chain escrow payout.  Fire-and-forget so the HTTP response
+  // isn't blocked on the blockchain round-trip.  Errors are logged in housePayout.
+  releaseToWinner({
+    onChainRaceId: onChainId.toString(),
+    winnerAddress:  winner,
+    pot:            pot.toString(),
+    winnerPayout:   winnerPayout.toString(),
+  }).catch((err) => {
+    console.error(`[autoStartRace] releaseToWinner FAILED for race ${row?.id}:`, err.message);
+  });
+
   return row;
 }
 

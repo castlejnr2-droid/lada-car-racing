@@ -1,27 +1,28 @@
 /**
  * House wallet payout service.
  *
- * When both players have revealed their secrets the backend must instruct the
- * on-chain escrow to settle and release funds to the winner.  We do this by
- * sending a signed internal message from the house wallet to the escrow
- * contract carrying the winner's address.
+ * After the backend determines a winner it sends a DeclareWinner internal
+ * message from the house wallet to the escrow contract.  The escrow contract
+ * then releases the pot to the winner's TON wallet address.
  *
- * Op codes (match the FunC contract):
- *   DeclareWinner  0x6c726304  — tells escrow who won; escrow calculates payout
- *   SettleRace     0x6c726305  — triggers payout execution after DeclareWinner
+ * Op code (must match the FunC contract):
+ *   DeclareWinner  0x6c726304
  *
- * For simplicity we combine both into one DeclareWinner message and let the
- * contract handle the payout atomically, which is how the reference contract
- * works.  If your contract separates them, un-comment the SettleRace send.
+ * Required env vars:
+ *   HOUSE_WALLET_MNEMONIC  — 24-word seed phrase of the house wallet
+ *   ESCROW_CONTRACT_ADDRESS — deployed escrow address
+ *   TONCENTER_API_KEY       — optional but recommended (rate-limit avoidance)
  */
-import { Address, beginCell, fromNano, toNano, internal } from '@ton/core';
+import { Address, beginCell, toNano, internal } from '@ton/core';
 import { TonClient, WalletContractV4 } from '@ton/ton';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { config } from '../config.js';
 
 const OP_DECLARE_WINNER = 0x6c726304;
 
-let _client = null;
+let _client  = null;
+let _wallet  = null;
+let _keyPair = null;
 
 function getClient() {
   if (_client) return _client;
@@ -29,76 +30,125 @@ function getClient() {
     config.ton.network === 'mainnet'
       ? 'https://toncenter.com/api/v2/jsonRPC'
       : 'https://testnet.toncenter.com/api/v2/jsonRPC';
-  _client = new TonClient({
-    endpoint,
-    apiKey: config.ton.apiKey || undefined,
-  });
+  console.log('[housePayout] TonClient endpoint:', endpoint);
+  _client = new TonClient({ endpoint, apiKey: config.ton.apiKey || undefined });
   return _client;
 }
-
-/**
- * Derive the WalletContractV4 instance and key pair from the mnemonic.
- * Cached after first call.
- */
-let _wallet = null;
-let _keyPair = null;
 
 async function getHouseWallet() {
   if (_wallet && _keyPair) return { wallet: _wallet, keyPair: _keyPair };
 
   const mnemonic = config.ton.houseWalletMnemonic;
-  if (!mnemonic) throw new Error('HOUSE_WALLET_MNEMONIC is not configured');
+  if (!mnemonic) {
+    throw new Error(
+      '[housePayout] HOUSE_WALLET_MNEMONIC is not set — cannot sign payout transactions. ' +
+      'Set it in Railway environment variables.',
+    );
+  }
 
   const words = mnemonic.trim().split(/\s+/);
+  if (words.length !== 24) {
+    throw new Error(`[housePayout] HOUSE_WALLET_MNEMONIC has ${words.length} words, expected 24`);
+  }
+
   _keyPair = await mnemonicToPrivateKey(words);
+  _wallet  = WalletContractV4.create({ publicKey: _keyPair.publicKey, workchain: 0 });
 
-  _wallet = WalletContractV4.create({
-    publicKey: _keyPair.publicKey,
-    workchain: 0,
-  });
-
+  const walletAddr = _wallet.address.toString({ urlSafe: true, bounceable: false });
+  console.log('[housePayout] house wallet address:', walletAddr);
   return { wallet: _wallet, keyPair: _keyPair };
 }
 
 /**
- * Send a DeclareWinner message to the escrow contract.
+ * Instruct the escrow contract to pay out the winner.
  *
  * @param {object} opts
- * @param {string} opts.onChainRaceId  - uint64 race ID the contract tracks
- * @param {string} opts.winnerAddress  - TON address (any form) of the winner
- * @param {string} [opts.escrowAddress] - override config if needed
+ * @param {string}  opts.onChainRaceId  numeric race ID (uint64) the contract tracks
+ * @param {string}  opts.winnerAddress  winner's TON wallet address (any format)
+ * @param {string}  [opts.pot]          pot size in nano-LADA, for logging only
+ * @param {string}  [opts.winnerPayout] payout in nano-LADA, for logging only
+ * @param {string}  [opts.escrowAddress] override config if needed
  */
-export async function releaseToWinner({ onChainRaceId, winnerAddress, escrowAddress }) {
+export async function releaseToWinner({ onChainRaceId, winnerAddress, pot, winnerPayout, escrowAddress }) {
   const escrow = escrowAddress || config.ton.escrowAddress;
-  if (!escrow) throw new Error('Escrow contract address not configured');
+
+  console.log('[housePayout] releaseToWinner called:', {
+    onChainRaceId,
+    winnerAddress,
+    pot,
+    winnerPayout,
+    escrow,
+    network: config.ton.network,
+  });
+
+  if (!escrow) {
+    throw new Error('[housePayout] ESCROW_CONTRACT_ADDRESS is not configured');
+  }
+
+  // Validate inputs before touching the chain
+  let winnerAddr;
+  try {
+    winnerAddr = Address.parse(winnerAddress);
+  } catch (e) {
+    throw new Error(`[housePayout] invalid winner address "${winnerAddress}": ${e.message}`);
+  }
+
+  let escrowAddr;
+  try {
+    escrowAddr = Address.parse(escrow);
+  } catch (e) {
+    throw new Error(`[housePayout] invalid escrow address "${escrow}": ${e.message}`);
+  }
+
+  let raceIdBigInt;
+  try {
+    raceIdBigInt = BigInt(onChainRaceId);
+  } catch (e) {
+    throw new Error(`[housePayout] invalid onChainRaceId "${onChainRaceId}": ${e.message}`);
+  }
 
   const { wallet, keyPair } = await getHouseWallet();
   const client   = getClient();
   const contract = client.open(wallet);
 
-  const seqno = await contract.getSeqno();
+  let seqno;
+  try {
+    seqno = await contract.getSeqno();
+    console.log('[housePayout] house wallet seqno:', seqno);
+  } catch (e) {
+    throw new Error(`[housePayout] failed to get seqno (is house wallet deployed/funded?): ${e.message}`);
+  }
 
   const body = beginCell()
     .storeUint(OP_DECLARE_WINNER, 32)
-    .storeUint(0n, 64)                                    // query_id
-    .storeUint(BigInt(onChainRaceId), 64)                 // race_id
-    .storeAddress(Address.parse(winnerAddress))           // winner
+    .storeUint(0n, 64)          // query_id
+    .storeUint(raceIdBigInt, 64) // race_id
+    .storeAddress(winnerAddr)    // winner
     .endCell();
 
-  await contract.sendTransfer({
-    seqno,
-    secretKey: keyPair.secretKey,
-    messages: [
-      internal({
-        to: Address.parse(escrow),
-        value: toNano('0.05'),   // gas for the contract execution
-        bounce: true,
-        body,
-      }),
-    ],
-  });
+  try {
+    await contract.sendTransfer({
+      seqno,
+      secretKey: keyPair.secretKey,
+      messages: [
+        internal({
+          to:     escrowAddr,
+          value:  toNano('0.05'),  // gas for escrow execution
+          bounce: true,
+          body,
+        }),
+      ],
+    });
+  } catch (e) {
+    throw new Error(`[housePayout] sendTransfer failed: ${e.message}`);
+  }
 
-  console.log(
-    `[housePayout] DeclareWinner sent | race=${onChainRaceId} | winner=${winnerAddress} | seqno=${seqno}`,
-  );
+  console.log('[housePayout] DeclareWinner sent successfully:', {
+    raceId:        onChainRaceId,
+    winner:        winnerAddress,
+    winnerPayout:  winnerPayout ? `${Number(BigInt(winnerPayout) / 1_000_000_000n)} LADA` : 'unknown',
+    pot:           pot ? `${Number(BigInt(pot) / 1_000_000_000n)} LADA` : 'unknown',
+    escrow,
+    seqno,
+  });
 }
