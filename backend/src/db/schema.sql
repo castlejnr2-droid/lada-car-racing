@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS lobbies (
   on_chain_race_id BIGINT,                              -- raceId in the escrow contract
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   closed_at        TIMESTAMPTZ,
-  CONSTRAINT lobbies_status_chk CHECK (status IN ('open','matched','cancelled'))
+  CONSTRAINT lobbies_status_chk CHECK (status IN ('open','matched','cancelled','pending'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_lobbies_status     ON lobbies(status);
@@ -135,6 +135,12 @@ CREATE INDEX IF NOT EXISTS idx_house_fees_collected  ON house_fees(collected_at 
 
 -- PATCHED-MIN-PLAYERS
 ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS username TEXT;
+
+-- v2-fix2: add 'pending' lobby status (lobbies hidden until host deposit confirmed)
+ALTER TABLE lobbies DROP CONSTRAINT IF EXISTS lobbies_status_chk;
+ALTER TABLE lobbies ADD CONSTRAINT lobbies_status_chk CHECK (status IN (
+  'open','matched','cancelled','pending'
+));
 
 -- ─────────────────────────────────────────────────────────────────────
 --  Idempotent migrations for older databases

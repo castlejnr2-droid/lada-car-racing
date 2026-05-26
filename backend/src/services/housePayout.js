@@ -28,6 +28,7 @@ const OP_CREATE_RACE      = 0x6c726300;
 const OP_PAYOUT           = 0x6c726304;
 const OP_REFUND           = 0x6c726305;
 const OP_WITHDRAW_JETTONS = 0x6c726306;
+const OP_SET_PLAYER2      = 0x6c726308;
 
 let _client  = null;
 let _wallet  = null;
@@ -194,6 +195,28 @@ export async function refundRace({ raceId }) {
 
   // 0.2 TON: the contract may send up to 2 jetton transfers
   await sendToEscrow({ body, value: '0.2', label: `Refund(${raceIdBigInt})` });
+}
+
+/**
+ * Update player2 for a race that hasn't had player2 deposit yet (SetPlayer2 op).
+ * Called when the real player2 joins a lobby that was opened with a placeholder.
+ */
+export async function setPlayer2OnChain({ raceId, player2 }) {
+  let p2Addr;
+  try { p2Addr = Address.parse(player2); } catch (e) {
+    throw new Error(`[housePayout] invalid player2 address "${player2}": ${e.message}`);
+  }
+
+  const raceIdBigInt = BigInt(raceId);
+  console.log('[housePayout] setPlayer2OnChain:', { raceId: raceIdBigInt.toString(), player2 });
+
+  const body = beginCell()
+    .storeUint(OP_SET_PLAYER2, 32)
+    .storeUint(raceIdBigInt, 64)
+    .storeAddress(p2Addr)
+    .endCell();
+
+  await sendToEscrow({ body, value: '0.05', label: `SetPlayer2(${raceIdBigInt}, p2=${player2})` });
 }
 
 /**

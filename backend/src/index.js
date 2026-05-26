@@ -72,6 +72,11 @@ async function boot() {
       'awaiting_deposits','settled','refunded'
     ))`);
     await pool.query(`ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS username TEXT`);
+    // Add 'pending' lobby status (hidden until host deposit confirmed)
+    await pool.query(`ALTER TABLE lobbies DROP CONSTRAINT IF EXISTS lobbies_status_chk`);
+    await pool.query(`ALTER TABLE lobbies ADD CONSTRAINT lobbies_status_chk CHECK (status IN (
+      'open','matched','cancelled','pending'
+    ))`);
     console.log('[boot] ✓ column patches applied');
   } catch (e) {
     console.error('[boot] column patch failed:', e?.message || e);

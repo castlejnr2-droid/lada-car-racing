@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TonConnectButton, useTonAddress } from '@tonconnect/ui-react';
 import { fetchLobbies, createLobby, joinLobby } from '../../api/lobbies.js';
-import { fetchRace } from '../../api/races.js';
 import { useMainButton, haptic, tgUser } from '../../lib/telegram.js';
 import { formatLada, ladaToNano, shortAddress } from '../../lib/format.js';
+import { useTonSender } from '../../blockchain/tonConnect.js';
+import { buildDeposit } from '../../blockchain/jetton.js';
 
 const PLAYER_OPTIONS = [2, 3, 4, 5];
 
@@ -15,33 +16,14 @@ export default function PlayTab({ balance = null }) {
   const [stake, setStake] = useState('10');
   const [minPlayers, setMinPlayers] = useState(2);
   const [sending, setSending] = useState(false);
-  const [myPendingLobbyId, setMyPendingLobbyId] = useState(null);
   const address = useTonAddress();
+  const { send } = useTonSender();
   const navigate = useNavigate();
   const username = tgUser()?.username || tgUser()?.first_name || null;
 
   const stakeNano = ladaToNano(stake || '0');
   const balanceOk = balance === null || stakeNano <= balance;
   const stakeValid = stakeNano > 0n && balanceOk;
-
-  // Poll for race start when the creator is waiting for players to join
-  useEffect(() => {
-    if (!myPendingLobbyId) return;
-    let cancelled = false;
-    const timer = setInterval(async () => {
-      try {
-        const r = await fetchRace(myPendingLobbyId);
-        if (!cancelled && r) {
-          clearInterval(timer);
-          setMyPendingLobbyId(null);
-          navigate(`/race/${myPendingLobbyId}`);
-        }
-      } catch {
-        // race not yet created — keep polling
-      }
-    }, 2000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [myPendingLobbyId, navigate]);
 
   async function refresh() {
     setLoading(true);
@@ -66,17 +48,47 @@ export default function PlayTab({ balance = null }) {
     setSending(true);
     try {
       haptic.medium();
-      const lobby = await createLobby({
+
+      // Step 1: create lobby + race on backend (status='pending', player2=house_wallet)
+      const result = await createLobby({
         stake: stakeNano.toString(),
         creator: address,
         username,
         minPlayers,
         maxPlayers: 5,
       });
+
+      // result has { id, race: { on_chain_id, ... }, ... }
+      const lobbyId = result.id;
+      const onChainId = result.race?.on_chain_id;
+
+      if (!onChainId) {
+        console.error('[PlayTab] createLobby did not return race.on_chain_id:', result);
+        alert('Lobby created but race setup failed. Please try again.');
+        return;
+      }
+
+      // Step 2: host deposits their stake immediately (as part of lobby creation)
+      // This triggers the indexer to open the lobby once confirmed on-chain.
+      try {
+        const tx = await buildDeposit({
+          owner: address,
+          amount: stakeNano.toString(),
+          raceIdOnChain: onChainId,
+        });
+        await send(tx);
+        haptic.success();
+      } catch (e) {
+        haptic.error();
+        // Deposit failed (user rejected or wallet error).
+        // Lobby exists but stays 'pending' — host can retry from Race screen.
+        console.warn('[PlayTab] deposit failed:', e.message);
+        // Still navigate so host can retry deposit from Race screen
+      }
+
       setCreating(false);
-      haptic.success();
-      setMyPendingLobbyId(lobby.id);
-      refresh();
+      // Step 3: navigate to race screen (shows "waiting for opponent" until lobby opens)
+      navigate(`/race/${lobbyId}`);
     } catch (e) {
       haptic.error();
       alert(e.message);
@@ -91,7 +103,9 @@ export default function PlayTab({ balance = null }) {
       haptic.medium();
       const result = await joinLobby(lobby.id, address, username);
       haptic.success();
-      if (result?.raceStarted) {
+      if (result?.raceStarted && result?.race?.id) {
+        navigate(`/race/${result.race.id}`);
+      } else if (result?.raceStarted) {
         navigate(`/race/${lobby.id}`);
       } else {
         refresh();
@@ -157,7 +171,7 @@ export default function PlayTab({ balance = null }) {
               ))}
             </div>
             <div style={{ color: 'var(--fg-muted)', fontSize: 12, marginTop: 4 }}>
-              Max 5 players per lobby. The race auto-starts once the chosen minimum is reached.
+              Lobby opens for others once your stake is deposited.
             </div>
           </div>
 
@@ -166,7 +180,7 @@ export default function PlayTab({ balance = null }) {
               Cancel
             </button>
             <button className="btn" disabled={!stakeValid || sending} onClick={handleCreate}>
-              {sending ? '…' : 'Create lobby'}
+              {sending ? '…' : 'Create & deposit'}
             </button>
           </div>
         </div>

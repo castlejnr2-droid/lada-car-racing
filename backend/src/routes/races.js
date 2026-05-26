@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db/pool.js';
+import { config } from '../config.js';
 
 const router = Router();
 
@@ -58,6 +59,12 @@ router.get('/:id', async (req, res, next) => {
       ? row.player1_username
       : row.player2_username;
 
+    // True when player2 is still the house-wallet placeholder (lobby open, waiting for joiner)
+    const houseWallet = config.ton.houseWallet;
+    const waiting_for_player2 = houseWallet
+      ? row.player2 === houseWallet
+      : false;
+
     // include the most recent tx events for this race
     const txs = await query(
       `SELECT type, player, amount::text, tx_hash, observed_at
@@ -68,7 +75,7 @@ router.get('/:id', async (req, res, next) => {
       [id],
     );
 
-    res.json({ ...row, winner_username, transactions: txs.rows });
+    res.json({ ...row, winner_username, waiting_for_player2, transactions: txs.rows });
   } catch (e) { next(e); }
 });
 

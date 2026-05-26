@@ -23,6 +23,7 @@ export const OP = {
   Refund:           0x6c726305,
   WithdrawJettons:  0x6c726306,
   SetJettonWallet:  0x6c726307,
+  SetPlayer2:       0x6c726308,
   // Outgoing events (indexed by backend)
   WinnerDeclared:   0x6c7263f1,
   RaceRefunded:     0x6c7263f2,
@@ -133,6 +134,25 @@ export class LadaEscrow implements Contract {
     const body = beginCell()
       .storeUint(OP.SetJettonWallet, 32)
       .storeAddress(args.wallet)
+      .endCell();
+
+    await provider.internal(via, {
+      value: args.value ?? toNano('0.05'),
+      sendMode: SendMode.PAY_GAS_SEPARATELY,
+      body,
+    });
+  }
+
+  // ── Send: update player2 before they deposit (owner only) ────────
+  async sendSetPlayer2(
+    provider: ContractProvider,
+    via: Sender,
+    args: { raceId: bigint; player2: Address; value?: bigint },
+  ) {
+    const body = beginCell()
+      .storeUint(OP.SetPlayer2, 32)
+      .storeUint(args.raceId, 64)
+      .storeAddress(args.player2)
       .endCell();
 
     await provider.internal(via, {

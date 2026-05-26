@@ -48,7 +48,7 @@ async function recordTx({ txHash, lt, type, raceId, player, amount, raw }) {
  */
 async function raceRowFor(onChainId) {
   const { rows } = await query(
-    `SELECT id, on_chain_id::text, state, player1, player2,
+    `SELECT id, lobby_id, on_chain_id::text, state, player1, player2,
             player1_deposited, player2_deposited
        FROM races
       WHERE on_chain_id = $1`,
@@ -102,6 +102,18 @@ export async function handleDeposit(e) {
     `UPDATE races SET player1_deposited=$2, player2_deposited=$3 WHERE id=$1`,
     [race.id, newP1dep, newP2dep],
   );
+
+  // FIX 2: When player1 (host) deposits, open the lobby so player2 can join.
+  // The lobby starts as 'pending' and only becomes visible after host's deposit.
+  if (isP1 && !race.player1_deposited && race.lobby_id) {
+    const upd = await query(
+      `UPDATE lobbies SET status='open' WHERE id=$1 AND status='pending' RETURNING id`,
+      [race.lobby_id],
+    );
+    if (upd.rowCount > 0) {
+      console.log(`[events.Deposit] host deposit confirmed → lobby=${race.lobby_id} opened`);
+    }
+  }
 
   if (newP1dep && newP2dep && race.state === 'awaiting_deposits') {
     console.log(`[events.Deposit] BOTH deposited — generating winner and triggering payout`);

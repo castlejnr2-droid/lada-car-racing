@@ -83,6 +83,14 @@ message(0x6c726307) SetJettonWallet {
     wallet: Address;
 }
 
+// Owner updates player2 for a pending race (before player2 has deposited).
+// Used when host creates the lobby before player2 is known: the race is
+// created with a placeholder player2, then updated when the real player joins.
+message(0x6c726308) SetPlayer2 {
+    raceId: Int as uint64;
+    player2: Address;
+}
+
 // =====================================================================
 //  Messages — outgoing events (indexed by the backend)
 // =====================================================================
@@ -295,6 +303,24 @@ contract LadaEscrow with Deployable {
     receive(msg: SetJettonWallet) {
         require(sender() == self.owner, "Only owner may set jetton wallet");
         self.ladaJettonWallet = msg.wallet;
+    }
+
+    // ───── 8. SetPlayer2 (owner only) ─────────────────────────────
+    //
+    // Updates player2 for a race that is still awaiting deposits.
+    // Used when the lobby was created before player2 was known: the race
+    // is created with a house-wallet placeholder, then updated when the
+    // real player joins the lobby.
+    receive(msg: SetPlayer2) {
+        require(sender() == self.owner, "Only owner may update player2");
+        let maybeRace: Race? = self.races.get(msg.raceId);
+        require(maybeRace != null, "Unknown race");
+        let r: Race = maybeRace!!;
+        require(r.state == STATE_AWAITING_DEPOSITS, "Race not awaiting deposits");
+        require(!r.deposited2, "Player2 already deposited");
+        require(msg.player2 != r.player1, "Players must differ");
+        r.player2 = msg.player2;
+        self.races.set(msg.raceId, r);
     }
 
     // ───── 7. Sweep stuck TON ─────────────────────────────────────

@@ -67,9 +67,12 @@ export default function Race() {
     return () => replayStopRef.current?.();
   }, [race?.state, race?.combined_seed, canvasEl]);
 
-  // Main button: only deposit phase
+  // Main button: deposit phase (only when player2 is known and it's our turn)
   useEffect(() => {
     if (!race || replayDone) return () => {};
+    // While waiting for opponent, no deposit button
+    if (race.waiting_for_player2) return () => {};
+
     const isP1 = race.player1 === address;
     const isP2 = race.player2 === address;
     if (!isP1 && !isP2) return () => {};
@@ -148,6 +151,22 @@ export default function Race() {
 }
 
 function PhaseOverlay({ race, address }) {
+  // Waiting for an opponent to join (host deposit not yet confirmed, or no player2 yet)
+  if (race.waiting_for_player2) {
+    return (
+      <div className="race__overlay">
+        <div className="race__phase-title">Waiting for opponent</div>
+        <p className="race__phase-help">
+          Your lobby will appear to others once your deposit is confirmed on-chain.
+          Share the link or wait — someone will join!
+        </p>
+        <p style={{ color: 'var(--fg-muted)', fontSize: 12 }}>
+          Stake {formatLada(race.stake)} LADA per player
+        </p>
+      </div>
+    );
+  }
+
   const isP1 = race.player1 === address;
   const myDeposited = isP1 ? race.player1_deposited : race.player2_deposited;
 
