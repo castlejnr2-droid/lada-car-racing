@@ -61,15 +61,28 @@ async function raceRowFor(onChainId) {
 //  Deposit — jetton arrived at the escrow contract
 // ──────────────────────────────────────────────────────────────────────
 export async function handleDeposit(e) {
-  console.log(`[events.Deposit] from=${e.from} raceId(chain)=${e.raceId} amount=${e.amount} txHash=${e.txHash}`);
+  console.log(`[events.Deposit] ── incoming ──────────────────────────`);
+  console.log(`[events.Deposit] txHash=${e.txHash} lt=${e.lt}`);
+  console.log(`[events.Deposit] raceId(chain)=${e.raceId}  amount=${e.amount}`);
+  console.log(`[events.Deposit] from=${e.from}`);
 
+  // ── 1. Find the race by on-chain ID ──────────────────────────────
   const race = await raceRowFor(e.raceId);
   if (!race) {
-    console.warn(`[events.Deposit] unknown on-chain raceId=${e.raceId} — skipping`);
+    console.warn(`[events.Deposit] ✗ no race found for on_chain_id=${e.raceId} — skipping`);
+    // Dump all on_chain_ids for debugging
+    const { rows: allIds } = await query(
+      `SELECT on_chain_id::text, state FROM races ORDER BY created_at DESC LIMIT 10`,
+    );
+    console.warn(`[events.Deposit] known on_chain_ids (newest 10):`, allIds.map(r => `${r.on_chain_id}(${r.state})`).join(', '));
     return { skipped: true, reason: 'unknown race' };
   }
-  console.log(`[events.Deposit] found race id=${race.id} state=${race.state} p1=${race.player1} p2=${race.player2}`);
+  console.log(`[events.Deposit] ✓ race found id=${race.id} lobby_id=${race.lobby_id}`);
+  console.log(`[events.Deposit]   state=${race.state}  p1_dep=${race.player1_deposited}  p2_dep=${race.player2_deposited}`);
+  console.log(`[events.Deposit]   player1=${race.player1}`);
+  console.log(`[events.Deposit]   player2=${race.player2}`);
 
+  // ── 2. Dedup ──────────────────────────────────────────────────────
   const fresh = await recordTx({
     txHash: e.txHash, lt: e.lt, type: 'deposit',
     raceId: race.id, player: e.from, amount: e.amount, raw: e,
@@ -79,21 +92,24 @@ export async function handleDeposit(e) {
     return { skipped: true, reason: 'duplicate' };
   }
 
-  // Normalize all addresses to raw "0:hex" before comparing
+  // ── 3. Normalize addresses for comparison ─────────────────────────
   const fromNorm = normalizeAddr(e.from);
   const p1Norm   = normalizeAddr(race.player1);
   const p2Norm   = normalizeAddr(race.player2);
-  console.log(`[events.Deposit] normalized: from=${fromNorm} p1=${p1Norm} p2=${p2Norm}`);
+  console.log(`[events.Deposit] normalized from=${fromNorm}`);
+  console.log(`[events.Deposit] normalized   p1=${p1Norm}`);
+  console.log(`[events.Deposit] normalized   p2=${p2Norm}`);
 
-  const isP1 = fromNorm && p1Norm && fromNorm === p1Norm;
-  const isP2 = fromNorm && p2Norm && fromNorm === p2Norm;
-  console.log(`[events.Deposit] isP1=${isP1} isP2=${isP2}`);
+  const isP1 = Boolean(fromNorm && p1Norm && fromNorm === p1Norm);
+  const isP2 = Boolean(fromNorm && p2Norm && fromNorm === p2Norm);
+  console.log(`[events.Deposit] isP1=${isP1}  isP2=${isP2}`);
 
   if (!isP1 && !isP2) {
-    console.warn(`[events.Deposit] depositor ${fromNorm} is neither player — ignoring`);
+    console.warn(`[events.Deposit] ✗ depositor is neither player — ignoring`);
     return { skipped: true, reason: 'unknown player' };
   }
 
+  // ── 4. Update deposit flags in races ─────────────────────────────
   const newP1dep = race.player1_deposited || isP1;
   const newP2dep = race.player2_deposited || isP2;
   console.log(`[events.Deposit] p1_dep: ${race.player1_deposited}→${newP1dep} | p2_dep: ${race.player2_deposited}→${newP2dep}`);
@@ -103,18 +119,28 @@ export async function handleDeposit(e) {
     [race.id, newP1dep, newP2dep],
   );
 
-  // FIX 2: When player1 (host) deposits, open the lobby so player2 can join.
-  // The lobby starts as 'pending' and only becomes visible after host's deposit.
-  if (isP1 && !race.player1_deposited && race.lobby_id) {
+  // ── 5. Open the lobby when host (player1) deposits ────────────────
+  // Lobby starts as 'pending' (hidden). Opening it makes it visible so
+  // player2 can join. The UPDATE is idempotent via `AND status='pending'`.
+  // We do NOT gate on `!race.player1_deposited` to survive partial failures.
+  if (isP1 && race.lobby_id) {
+    console.log(`[events.Deposit] host deposit — checking lobby ${race.lobby_id} status…`);
+    const lobbyBefore = await query(`SELECT status FROM lobbies WHERE id=$1`, [race.lobby_id]);
+    const lobbyStatus = lobbyBefore.rows[0]?.status ?? 'NOT_FOUND';
+    console.log(`[events.Deposit] lobby current status=${lobbyStatus}`);
+
     const upd = await query(
       `UPDATE lobbies SET status='open' WHERE id=$1 AND status='pending' RETURNING id`,
       [race.lobby_id],
     );
     if (upd.rowCount > 0) {
-      console.log(`[events.Deposit] host deposit confirmed → lobby=${race.lobby_id} opened`);
+      console.log(`[events.Deposit] ✓ lobby=${race.lobby_id} opened — now visible to other players`);
+    } else {
+      console.warn(`[events.Deposit] lobby=${race.lobby_id} NOT updated (status='${lobbyStatus}', expected 'pending')`);
     }
   }
 
+  // ── 6. Both deposited → determine winner and trigger payout ───────
   if (newP1dep && newP2dep && race.state === 'awaiting_deposits') {
     console.log(`[events.Deposit] BOTH deposited — generating winner and triggering payout`);
 

@@ -133,16 +133,20 @@ router.post('/withdraw', requireAdmin, async (req, res, next) => {
 
 // ───── POST /api/house/cancel-all-pending ─ admin: purge stuck lobbies ──────
 //
-// Sets all 'pending' and 'open' lobbies to 'cancelled' and their races to
-// 'refunded'. Safe to call repeatedly. Useful on boot to clean up test data
-// or races that got stuck mid-flow.
-router.post('/cancel-all-pending', requireAdmin, async (_req, res, next) => {
+// Sets pending/open lobbies to 'cancelled' and their races to 'refunded'.
+// By default only targets lobbies older than 15 minutes.
+// Pass ?force=1 to cancel all regardless of age.
+router.post('/cancel-all-pending', requireAdmin, async (req, res, next) => {
   try {
+    const force = req.query.force === '1';
+    const ageFilter = force ? '' : `AND created_at < now() - interval '15 minutes'`;
+
     // Cancel lobbies first (races FK references lobbies)
     const lobbiesResult = await query(`
       UPDATE lobbies
          SET status = 'cancelled', closed_at = COALESCE(closed_at, now())
        WHERE status IN ('pending', 'open')
+         ${ageFilter}
       RETURNING id
     `);
 
