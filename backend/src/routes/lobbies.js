@@ -83,6 +83,13 @@ router.post('/', async (req, res, next) => {
       return res.status(500).json({ error: 'HOUSE_WALLET_ADDRESS not configured' });
     }
 
+    // Ensure house wallet exists in players table (FK constraint on races.player2)
+    await query(
+      `INSERT INTO players (address, username) VALUES ($1, 'house')
+       ON CONFLICT (address) DO NOTHING`,
+      [houseWallet],
+    );
+
     const onChainId = BigInt(Date.now());
     const stakeBigInt = BigInt(stake);
     const pot = stakeBigInt * 2n;   // for 2-player race

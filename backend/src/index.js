@@ -83,6 +83,28 @@ async function boot() {
     process.exit(1);
   }
 
+  // Cancel all stuck pending/open lobbies from previous deploys.
+  try {
+    const stuck = await pool.query(`
+      UPDATE lobbies
+         SET status = 'cancelled', closed_at = COALESCE(closed_at, now())
+       WHERE status IN ('pending', 'open')
+      RETURNING id
+    `);
+    const stuckIds = stuck.rows.map(r => r.id);
+    if (stuckIds.length > 0) {
+      await pool.query(`
+        UPDATE races SET state = 'refunded', finished_at = COALESCE(finished_at, now())
+         WHERE lobby_id = ANY($1::uuid[]) AND state = 'awaiting_deposits'
+      `, [stuckIds]);
+      console.log(`[boot] cancelled ${stuckIds.length} stuck pending/open lobbies`);
+    } else {
+      console.log('[boot] no stuck lobbies to cancel');
+    }
+  } catch (e) {
+    console.warn('[boot] stuck-lobby cleanup failed (non-fatal):', e?.message || e);
+  }
+
   app.listen(PORT, HOST, () => {
     console.log(`[lada-backend] listening on ${HOST}:${PORT}  (env PORT=${process.env.PORT || 'unset'})`);
     // Indexer runs in-process for the MVP. Fire-and-forget; it polls TonAPI.

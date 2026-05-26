@@ -131,4 +131,42 @@ router.post('/withdraw', requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ───── POST /api/house/cancel-all-pending ─ admin: purge stuck lobbies ──────
+//
+// Sets all 'pending' and 'open' lobbies to 'cancelled' and their races to
+// 'refunded'. Safe to call repeatedly. Useful on boot to clean up test data
+// or races that got stuck mid-flow.
+router.post('/cancel-all-pending', requireAdmin, async (_req, res, next) => {
+  try {
+    // Cancel lobbies first (races FK references lobbies)
+    const lobbiesResult = await query(`
+      UPDATE lobbies
+         SET status = 'cancelled', closed_at = COALESCE(closed_at, now())
+       WHERE status IN ('pending', 'open')
+      RETURNING id
+    `);
+
+    const cancelledLobbyIds = lobbiesResult.rows.map(r => r.id);
+
+    let racesUpdated = 0;
+    if (cancelledLobbyIds.length > 0) {
+      const racesResult = await query(`
+        UPDATE races
+           SET state = 'refunded', finished_at = COALESCE(finished_at, now())
+         WHERE lobby_id = ANY($1::uuid[])
+           AND state = 'awaiting_deposits'
+        RETURNING id
+      `, [cancelledLobbyIds]);
+      racesUpdated = racesResult.rowCount;
+    }
+
+    console.log(`[house] cancel-all-pending: lobbies=${lobbiesResult.rowCount} races=${racesUpdated}`);
+    res.json({
+      ok: true,
+      lobbiesCancelled: lobbiesResult.rowCount,
+      racesRefunded: racesUpdated,
+    });
+  } catch (e) { next(e); }
+});
+
 export default router;
