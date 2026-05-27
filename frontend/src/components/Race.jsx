@@ -29,20 +29,24 @@ export default function Race() {
 
   useEffect(() => useBackButton(() => navigate('/')), [navigate]);
 
-  // Poll backend until race is settled or refunded
+  // Poll backend until race reaches a terminal state (settled or refunded).
+  // We intentionally keep polling through 'active' so the overlay hides as
+  // soon as that state is seen, and we continue to detect 'settled' for the
+  // result screen without needing a separate fetch.
   useEffect(() => {
+    if (!raceId) return;
     let cancelled = false;
     async function poll() {
       while (!cancelled) {
         try {
-          const r = await fetchRace(raceId);
+          const data = await fetchRace(raceId);
           if (cancelled) return;
-          setRace(r);
-          if (r.state === 'settled' || r.state === 'active' || r.state === 'refunded') return;
+          setRace(data);
+          if (data.state === 'settled' || data.state === 'refunded') return;
         } catch (e) {
           console.warn('[race] poll error', e);
         }
-        await new Promise((r) => setTimeout(r, POLL_MS));
+        await new Promise(resolve => setTimeout(resolve, POLL_MS));
       }
     }
     poll();
