@@ -69,7 +69,7 @@ async function boot() {
     `);
     await pool.query(`ALTER TABLE races DROP CONSTRAINT IF EXISTS races_state_chk`);
     await pool.query(`ALTER TABLE races ADD CONSTRAINT races_state_chk CHECK (state IN (
-      'awaiting_deposits','settled','refunded'
+      'awaiting_deposits','active','settled','refunded'
     ))`);
     await pool.query(`ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS username TEXT`);
     // Add 'pending' lobby status (hidden until host deposit confirmed)

@@ -1,0 +1,927 @@
+#pragma version =0.4.6;
+#pragma allow-post-modification;
+#pragma compute-asm-ltr;
+
+;; tact_LadaEscrow.headers.fc
+;;
+;; Header files for LadaEscrow
+;; NOTE: declarations are sorted for optimal order
+;;
+
+;; __tact_context_get
+(int, slice, int, slice) __tact_context_get() inline;
+
+;; __tact_context_get_sender
+slice __tact_context_get_sender() inline;
+
+;; __tact_dict_get_uint_cell
+cell __tact_dict_get_uint_cell(cell d, int kl, int k) inline;
+
+;; __tact_dict_set_uint_cell
+(cell, ()) __tact_dict_set_uint_cell(cell d, int kl, int k, cell v) inline;
+
+;; $DeployOk$_store
+builder $DeployOk$_store(builder build_0, (int) v) inline;
+
+;; $DeployOk$_store_cell
+cell $DeployOk$_store_cell((int) v, builder b) inline;
+
+;; $WinnerDeclared$_store
+builder $WinnerDeclared$_store(builder build_0, (int, slice, slice, int, int, int, int) v) inline;
+
+;; $WinnerDeclared$_store_cell
+cell $WinnerDeclared$_store_cell((int, slice, slice, int, int, int, int) v, builder b) inline;
+
+;; $RaceRefunded$_store
+builder $RaceRefunded$_store(builder build_0, (int, slice, slice, int) v) inline;
+
+;; $RaceRefunded$_store_cell
+cell $RaceRefunded$_store_cell((int, slice, slice, int) v, builder b) inline;
+
+;; $TokenTransfer$_store
+builder $TokenTransfer$_store(builder build_0, (int, int, slice, slice, cell, int, slice) v) inline;
+
+;; $TokenTransfer$_store_cell
+cell $TokenTransfer$_store_cell((int, int, slice, slice, cell, int, slice) v, builder b) inline;
+
+;; $Race$_store
+builder $Race$_store(builder build_0, (int, slice, slice, int, int, int) v) inline;
+
+;; $Race$_store_cell
+cell $Race$_store_cell((int, slice, slice, int, int, int) v, builder b) inline;
+
+;; $Race$_load
+(slice, ((int, slice, slice, int, int, int))) $Race$_load(slice sc_0) inline;
+
+;; $Race$_as_optional
+tuple $Race$_as_optional((int, slice, slice, int, int, int) v) inline;
+
+;; $Race$_load_opt
+tuple $Race$_load_opt(cell cl) inline;
+
+;; $LadaEscrow$_store
+builder $LadaEscrow$_store(builder build_0, (slice, slice, slice, cell) v) inline;
+
+;; $LadaEscrow$_load
+(slice, ((slice, slice, slice, cell))) $LadaEscrow$_load(slice sc_0) inline;
+
+;; $Context$_get_value
+_ $Context$_get_value((int, slice, int, slice) v) inline;
+
+;; $Race$_not_null
+((int, slice, slice, int, int, int)) $Race$_not_null(tuple v) inline;
+
+;; $Race$_to_tuple
+tuple $Race$_to_tuple(((int, slice, slice, int, int, int)) v) inline;
+
+;; $Race$_to_opt_tuple
+tuple $Race$_to_opt_tuple(tuple v) inline;
+
+;; $Race$_to_opt_external
+tuple $Race$_to_opt_external(tuple v) inline;
+
+;; $LadaEscrow$init$_load
+(slice, ((slice, slice, slice))) $LadaEscrow$init$_load(slice sc_0) inline;
+
+;; $LadaEscrow$_contract_init
+(slice, slice, slice, cell) $LadaEscrow$_contract_init(slice $owner, slice $houseWallet, slice $ladaJettonWallet) impure inline;
+
+;; $LadaEscrow$_contract_load
+(slice, slice, slice, cell) $LadaEscrow$_contract_load() impure inline;
+
+;; $LadaEscrow$_contract_store
+() $LadaEscrow$_contract_store((slice, slice, slice, cell) v) impure inline;
+
+;; $global_emit
+() $global_emit(cell $body) impure inline;
+
+;; $SendParameters$_constructor_to_value_mode_body
+((int, cell, cell, cell, int, slice, int)) $SendParameters$_constructor_to_value_mode_body(slice $to, int $value, int $mode, cell $body) inline;
+
+;; $TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload
+((int, int, slice, slice, cell, int, slice)) $TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload(int $queryId, int $amount, slice $destination, slice $responseDestination, cell $customPayload, int $forwardTonAmount, slice $forwardPayload) inline;
+
+;; $LadaEscrow$_fun_sendJetton
+((slice, slice, slice, cell), ()) $LadaEscrow$_fun_sendJetton((slice, slice, slice, cell) $self, slice $to, int $amount, int $queryId) impure inline_ref;
+
+;; $LadaEscrow$_fun_raceOf
+((slice, slice, slice, cell), tuple) $LadaEscrow$_fun_raceOf((slice, slice, slice, cell) $self, int $raceId) impure inline_ref;
+
+;; $LadaEscrow$_fun_owner
+((slice, slice, slice, cell), slice) $LadaEscrow$_fun_owner((slice, slice, slice, cell) $self) impure inline_ref;
+
+;; $LadaEscrow$_fun_houseWalletAddress
+((slice, slice, slice, cell), slice) $LadaEscrow$_fun_houseWalletAddress((slice, slice, slice, cell) $self) impure inline_ref;
+
+;; $LadaEscrow$_fun_jettonWalletAddress
+((slice, slice, slice, cell), slice) $LadaEscrow$_fun_jettonWalletAddress((slice, slice, slice, cell) $self) impure inline_ref;
+
+;; $MessageParameters$_constructor_bounce_to_value_mode_body
+((int, cell, int, slice, int)) $MessageParameters$_constructor_bounce_to_value_mode_body(int $bounce, slice $to, int $value, int $mode, cell $body) inline;
+
+;; $LadaEscrow$_fun_notify
+((slice, slice, slice, cell), ()) $LadaEscrow$_fun_notify((slice, slice, slice, cell) $self, cell $body) impure inline;
+
+;; $Race$_constructor_stake_player1_player2_deposited1_deposited2_state
+((int, slice, slice, int, int, int)) $Race$_constructor_stake_player1_player2_deposited1_deposited2_state(int $stake, slice $player1, slice $player2, int $deposited1, int $deposited2, int $state) inline;
+
+;; $WinnerDeclared$_constructor_raceId_winner_loser_combinedSeed_pot_payout_houseFee
+((int, slice, slice, int, int, int, int)) $WinnerDeclared$_constructor_raceId_winner_loser_combinedSeed_pot_payout_houseFee(int $raceId, slice $winner, slice $loser, int $combinedSeed, int $pot, int $payout, int $houseFee) inline;
+
+;; $RaceRefunded$_constructor_raceId_player1_player2_refundAmount
+((int, slice, slice, int)) $RaceRefunded$_constructor_raceId_player1_player2_refundAmount(int $raceId, slice $player1, slice $player2, int $refundAmount) inline;
+
+;; $DeployOk$_constructor_queryId
+((int)) $DeployOk$_constructor_queryId(int $queryId) inline;
+
+
+;; tact_LadaEscrow.stdlib.fc
+global (int, slice, int, slice) __tact_context;
+global slice __tact_context_sender;
+global cell __tact_child_contract_codes;
+global int __tact_randomized;
+
+(cell, int) __tact_dict_delete_uint(cell dict, int key_len, int index) asm(index dict key_len) """
+    DICTUDEL
+""";
+
+(int, slice, int, slice) __tact_context_get() inline {
+    return __tact_context;
+}
+
+slice __tact_context_get_sender() inline {
+    return __tact_context_sender;
+}
+
+forall X0, X1, X2, X3, X4, X5 -> tuple __tact_tuple_create_6((X0, X1, X2, X3, X4, X5) v) asm """
+    6 TUPLE
+""";
+
+forall X0, X1, X2, X3, X4, X5 -> (X0, X1, X2, X3, X4, X5) __tact_tuple_destroy_6(tuple v) asm """
+    6 UNTUPLE
+""";
+
+cell __tact_dict_get_uint_cell(cell d, int kl, int k) inline {
+    var (r, ok) = udict_get_ref?(d, kl, k);
+    if (ok) {
+        return r;
+    } else {
+        return null();
+    }
+}
+
+(cell, ()) __tact_dict_set_uint_cell(cell d, int kl, int k, cell v) inline {
+    if (null?(v)) {
+        var (r, ok) = udict_delete?(d, kl, k);
+        return (r, ());
+    } else {
+        return (udict_set_ref(d, kl, k, v), ());
+    }
+}
+
+builder $global_beginCell() impure asm """
+    NEWC
+""";
+
+cell $global_emptyCell() impure asm """
+    <b b> PUSHREF // Pure Fift: "<b" creates a builder, "b>" turns it into a cell at compile time
+""";
+
+slice $global_emptySlice() impure asm """
+    b{} PUSHSLICE
+""";
+
+int $global_myBalance() impure asm """
+    BALANCE FIRST
+""";
+
+() $global_nativeReserve(int $amount, int $mode) impure asm """
+    RAWRESERVE
+""";
+
+() $global_message((int, cell, int, slice, int) $params) impure asm """
+    NEWC
+    b{01} STSLICECONST  // store tag = $0 and ihr_disabled = true
+    1 STI               // store `bounce`
+    b{000} STSLICECONST // store bounced = false and src = addr_none
+    STSLICE             // store `to`
+    SWAP
+    STGRAMS             // store `value`
+    106 PUSHINT         // 1 + 4 + 4 + 64 + 32 + 1
+    STZEROES
+    // → Stack state
+    // s0: Builder
+    // s1: `body`
+    // s2: `mode`
+    STDICT
+    ENDC
+    SWAP
+    SENDRAWMSG
+""";
+
+() $global_send((int, cell, cell, cell, int, slice, int) $params) impure asm """
+    NEWC
+    b{01} STSLICECONST  // store tag = $0 and ihr_disabled = true
+    1 STI               // store `bounce`
+    b{000} STSLICECONST // store bounced = false and src = addr_none
+    STSLICE             // store `to`
+    SWAP
+    STGRAMS             // store `value`
+    105 PUSHINT         // 1 + 4 + 4 + 64 + 32
+    STZEROES            // store currency_collection, ihr_fee, fwd_fee, created_lt and created_at
+    // → Stack state
+    // s0: Builder
+    // s1: `data`
+    // s2: `code`
+    // s3: `body`
+    // s4: `mode`
+
+    // Group 2: Placing the Builder after code and data, then checking those for nullability
+    s2 XCHG0
+    DUP2
+    ISNULL
+    SWAP
+    ISNULL
+    AND
+    // → Stack state
+    // s0: -1 (true) if `data` and `code` are both null, 0 (false) otherwise
+    // s1: `code`
+    // s2: `data`
+    // s3: Builder
+    // s4: `body`
+    // s5: `mode`
+
+    // Group 3: Left branch of the IFELSE, executed if s0 is -1 (true)
+    <{
+        DROP2 // drop `data` and `code`, since either of those is null
+        b{0} STSLICECONST
+    }> PUSHCONT
+
+    // Group 3: Right branch of the IFELSE, executed if s0 is 0 (false)
+    <{
+        // _ split_depth:(Maybe (## 5))
+        //   special:(Maybe TickTock)
+        //   code:(Maybe ^Cell)
+        //   data:(Maybe ^Cell)
+        //   library:(Maybe ^Cell)
+        // = StateInit;
+        ROT                // place message Builder on top
+        b{10} STSLICECONST // store Maybe = true, Either = false
+        // Start composing inlined StateInit
+        b{00} STSLICECONST // store split_depth and special first
+        STDICT             // store code
+        STDICT             // store data
+        b{0} STSLICECONST  // store library
+    }> PUSHCONT
+
+    // Group 3: IFELSE that does the branching shown above
+    IFELSE
+    // → Stack state
+    // s0: Builder
+    // s1: null or StateInit
+    // s2: `body`
+    // s3: `mode`
+
+    // Group 4: Finalizing the message
+    STDICT // store `body` as ref with an extra Maybe bit, since `body` might be null
+    ENDC
+    // → Stack state
+    // s0: Cell
+    // s1: `mode`
+
+    // Group 5: Sending the message, with `mode` on top
+    SWAP
+    SENDRAWMSG // https://github.com/tact-lang/tact/issues/1558
+""";
+
+() $global_sendRawMessage(cell $msg, int $mode) impure asm """
+    SENDRAWMSG
+""";
+
+cell $Builder$_fun_endCell(builder $self) impure asm """
+    ENDC
+""";
+
+builder $Builder$_fun_storeRef(cell $cell, builder $self) impure asm """
+    STREF
+""";
+
+() $global_emit(cell $body) impure inline {
+    cell $c = $Builder$_fun_endCell($Builder$_fun_storeRef($body, store_uint($global_beginCell(), 15211807202738752817960438464513, 104)));
+    $global_sendRawMessage($c, 0);
+}
+
+int $Slice$_fun_bits(slice $self) impure asm """
+    SBITS
+""";
+
+((slice, slice, slice, cell), ()) $LadaEscrow$_fun_notify((slice, slice, slice, cell) $self, cell $body) impure inline {
+    var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = $self;
+    slice $to = __tact_context_get_sender();
+    int $bounce = false;
+    if (false) {
+        int $balance = $global_myBalance();
+        int $balanceBeforeMessage = ($balance - $Context$_get_value(__tact_context_get()));
+        if (($balanceBeforeMessage < 0)) {
+            $global_nativeReserve(0, 0);
+            $global_message($MessageParameters$_constructor_bounce_to_value_mode_body($bounce, $to, 0, 130, $body));
+            return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), ());
+        }
+    }
+    $global_message($MessageParameters$_constructor_bounce_to_value_mode_body($bounce, $to, 0, 66, $body));
+    return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), ());
+}
+
+;; tact_LadaEscrow.storage.fc
+;;
+;; Type: Context
+;; TLB: _ bounceable:bool sender:address value:int257 raw:^slice = Context
+;;
+
+_ $Context$_get_value((int, slice, int, slice) v) inline {
+    var (v'bounceable, v'sender, v'value, v'raw) = v;
+    return v'value;
+}
+
+;;
+;; Type: SendParameters
+;; TLB: _ mode:int257 body:Maybe ^cell code:Maybe ^cell data:Maybe ^cell value:int257 to:address bounce:bool = SendParameters
+;;
+
+((int, cell, cell, cell, int, slice, int)) $SendParameters$_constructor_to_value_mode_body(slice $to, int $value, int $mode, cell $body) inline {
+    return ($mode, $body, null(), null(), $value, $to, true);
+}
+
+;;
+;; Type: MessageParameters
+;; TLB: _ mode:int257 body:Maybe ^cell value:int257 to:address bounce:bool = MessageParameters
+;;
+
+((int, cell, int, slice, int)) $MessageParameters$_constructor_bounce_to_value_mode_body(int $bounce, slice $to, int $value, int $mode, cell $body) inline {
+    return ($mode, $body, $value, $to, $bounce);
+}
+
+;;
+;; Type: DeployOk
+;; Header: 0xaff90f57
+;; TLB: deploy_ok#aff90f57 queryId:uint64 = DeployOk
+;;
+
+builder $DeployOk$_store(builder build_0, (int) v) inline {
+    var (v'queryId) = v;
+    build_0 = store_uint(build_0, 2952335191, 32);
+    build_0 = build_0.store_uint(v'queryId, 64);
+    return build_0;
+}
+
+cell $DeployOk$_store_cell((int) v, builder b) inline {
+    return $DeployOk$_store(b, v).end_cell();
+}
+
+((int)) $DeployOk$_constructor_queryId(int $queryId) inline {
+    return ($queryId);
+}
+
+;;
+;; Type: WinnerDeclared
+;; Header: 0x6c7263f1
+;; TLB: winner_declared#6c7263f1 raceId:uint64 winner:address loser:address combinedSeed:uint256 pot:coins payout:coins houseFee:coins = WinnerDeclared
+;;
+
+builder $WinnerDeclared$_store(builder build_0, (int, slice, slice, int, int, int, int) v) inline {
+    var (v'raceId, v'winner, v'loser, v'combinedSeed, v'pot, v'payout, v'houseFee) = v;
+    build_0 = store_uint(build_0, 1819436017, 32);
+    build_0 = build_0.store_uint(v'raceId, 64);
+    build_0 = build_0.store_slice(v'winner);
+    build_0 = build_0.store_slice(v'loser);
+    build_0 = build_0.store_uint(v'combinedSeed, 256);
+    build_0 = build_0.store_varuint16(v'pot);
+    var build_1 = begin_cell();
+    build_1 = build_1.store_varuint16(v'payout);
+    build_1 = build_1.store_varuint16(v'houseFee);
+    build_0 = store_builder_ref(build_0, build_1);
+    return build_0;
+}
+
+cell $WinnerDeclared$_store_cell((int, slice, slice, int, int, int, int) v, builder b) inline {
+    return $WinnerDeclared$_store(b, v).end_cell();
+}
+
+((int, slice, slice, int, int, int, int)) $WinnerDeclared$_constructor_raceId_winner_loser_combinedSeed_pot_payout_houseFee(int $raceId, slice $winner, slice $loser, int $combinedSeed, int $pot, int $payout, int $houseFee) inline {
+    return ($raceId, $winner, $loser, $combinedSeed, $pot, $payout, $houseFee);
+}
+
+;;
+;; Type: RaceRefunded
+;; Header: 0x6c7263f2
+;; TLB: race_refunded#6c7263f2 raceId:uint64 player1:address player2:address refundAmount:coins = RaceRefunded
+;;
+
+builder $RaceRefunded$_store(builder build_0, (int, slice, slice, int) v) inline {
+    var (v'raceId, v'player1, v'player2, v'refundAmount) = v;
+    build_0 = store_uint(build_0, 1819436018, 32);
+    build_0 = build_0.store_uint(v'raceId, 64);
+    build_0 = build_0.store_slice(v'player1);
+    build_0 = build_0.store_slice(v'player2);
+    build_0 = build_0.store_varuint16(v'refundAmount);
+    return build_0;
+}
+
+cell $RaceRefunded$_store_cell((int, slice, slice, int) v, builder b) inline {
+    return $RaceRefunded$_store(b, v).end_cell();
+}
+
+((int, slice, slice, int)) $RaceRefunded$_constructor_raceId_player1_player2_refundAmount(int $raceId, slice $player1, slice $player2, int $refundAmount) inline {
+    return ($raceId, $player1, $player2, $refundAmount);
+}
+
+;;
+;; Type: TokenTransfer
+;; Header: 0x0f8a7ea5
+;; TLB: token_transfer#0f8a7ea5 queryId:uint64 amount:coins destination:address responseDestination:address customPayload:Maybe ^cell forwardTonAmount:coins forwardPayload:remainder<slice> = TokenTransfer
+;;
+
+builder $TokenTransfer$_store(builder build_0, (int, int, slice, slice, cell, int, slice) v) inline {
+    var (v'queryId, v'amount, v'destination, v'responseDestination, v'customPayload, v'forwardTonAmount, v'forwardPayload) = v;
+    build_0 = store_uint(build_0, 260734629, 32);
+    build_0 = build_0.store_uint(v'queryId, 64);
+    build_0 = build_0.store_varuint16(v'amount);
+    build_0 = build_0.store_slice(v'destination);
+    build_0 = build_0.store_slice(v'responseDestination);
+    build_0 = build_0.store_maybe_ref(v'customPayload);
+    build_0 = build_0.store_varuint16(v'forwardTonAmount);
+    build_0 = build_0.store_slice(v'forwardPayload);
+    return build_0;
+}
+
+cell $TokenTransfer$_store_cell((int, int, slice, slice, cell, int, slice) v, builder b) inline {
+    return $TokenTransfer$_store(b, v).end_cell();
+}
+
+((int, int, slice, slice, cell, int, slice)) $TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload(int $queryId, int $amount, slice $destination, slice $responseDestination, cell $customPayload, int $forwardTonAmount, slice $forwardPayload) inline {
+    return ($queryId, $amount, $destination, $responseDestination, $customPayload, $forwardTonAmount, $forwardPayload);
+}
+
+;;
+;; Type: Race
+;; TLB: _ stake:coins player1:address player2:address deposited1:bool deposited2:bool state:uint8 = Race
+;;
+
+builder $Race$_store(builder build_0, (int, slice, slice, int, int, int) v) inline {
+    var (v'stake, v'player1, v'player2, v'deposited1, v'deposited2, v'state) = v;
+    build_0 = build_0.store_varuint16(v'stake);
+    build_0 = build_0.store_slice(v'player1);
+    build_0 = build_0.store_slice(v'player2);
+    build_0 = build_0.store_int(v'deposited1, 1);
+    build_0 = build_0.store_int(v'deposited2, 1);
+    build_0 = build_0.store_uint(v'state, 8);
+    return build_0;
+}
+
+cell $Race$_store_cell((int, slice, slice, int, int, int) v, builder b) inline {
+    return $Race$_store(b, v).end_cell();
+}
+
+(slice, ((int, slice, slice, int, int, int))) $Race$_load(slice sc_0) inline {
+    var v'stake = sc_0~load_varuint16();
+    var v'player1 = sc_0~load_msg_addr();
+    var v'player2 = sc_0~load_msg_addr();
+    var v'deposited1 = sc_0~load_int(1);
+    var v'deposited2 = sc_0~load_int(1);
+    var v'state = sc_0~load_uint(8);
+    return (sc_0, (v'stake, v'player1, v'player2, v'deposited1, v'deposited2, v'state));
+}
+
+tuple $Race$_as_optional((int, slice, slice, int, int, int) v) inline {
+    var (v'stake, v'player1, v'player2, v'deposited1, v'deposited2, v'state) = v;
+    return __tact_tuple_create_6(v'stake, v'player1, v'player2, v'deposited1, v'deposited2, v'state);
+}
+
+tuple $Race$_load_opt(cell cl) inline {
+    if (null?(cl)) {
+        return null();
+    }
+    var sc = cl.begin_parse();
+    return $Race$_as_optional(sc~$Race$_load());
+}
+
+((int, slice, slice, int, int, int)) $Race$_not_null(tuple v) inline {
+    throw_if(128, null?(v));
+    var (int vvv'stake, slice vvv'player1, slice vvv'player2, int vvv'deposited1, int vvv'deposited2, int vvv'state) = __tact_tuple_destroy_6(v);
+    return (vvv'stake, vvv'player1, vvv'player2, vvv'deposited1, vvv'deposited2, vvv'state);
+}
+
+tuple $Race$_to_tuple(((int, slice, slice, int, int, int)) v) inline {
+    var (v'stake, v'player1, v'player2, v'deposited1, v'deposited2, v'state) = v;
+    return __tact_tuple_create_6(v'stake, v'player1, v'player2, v'deposited1, v'deposited2, v'state);
+}
+
+tuple $Race$_to_opt_tuple(tuple v) inline {
+    if (null?(v)) { return null(); } 
+    return $Race$_to_tuple($Race$_not_null(v)); 
+}
+
+tuple $Race$_to_opt_external(tuple v) inline {
+    var loaded = $Race$_to_opt_tuple(v);
+    if (null?(loaded)) {
+        return null();
+    } else {
+        return (loaded);
+    }
+}
+
+((int, slice, slice, int, int, int)) $Race$_constructor_stake_player1_player2_deposited1_deposited2_state(int $stake, slice $player1, slice $player2, int $deposited1, int $deposited2, int $state) inline {
+    return ($stake, $player1, $player2, $deposited1, $deposited2, $state);
+}
+
+;;
+;; Type: LadaEscrow
+;; TLB: _ owner:address houseWallet:address ladaJettonWallet:address races:dict<uint64, ^Race{stake:coins,player1:address,player2:address,deposited1:bool,deposited2:bool,state:uint8}> = LadaEscrow
+;;
+
+builder $LadaEscrow$_store(builder build_0, (slice, slice, slice, cell) v) inline {
+    var (v'owner, v'houseWallet, v'ladaJettonWallet, v'races) = v;
+    build_0 = build_0.store_slice(v'owner);
+    build_0 = build_0.store_slice(v'houseWallet);
+    build_0 = build_0.store_slice(v'ladaJettonWallet);
+    build_0 = build_0.store_dict(v'races);
+    return build_0;
+}
+
+(slice, ((slice, slice, slice, cell))) $LadaEscrow$_load(slice sc_0) inline {
+    var v'owner = sc_0~load_msg_addr();
+    var v'houseWallet = sc_0~load_msg_addr();
+    var v'ladaJettonWallet = sc_0~load_msg_addr();
+    var v'races = sc_0~load_dict();
+    return (sc_0, (v'owner, v'houseWallet, v'ladaJettonWallet, v'races));
+}
+
+(slice, ((slice, slice, slice))) $LadaEscrow$init$_load(slice sc_0) inline {
+    var v'owner = sc_0~load_msg_addr();
+    var v'houseWallet = sc_0~load_msg_addr();
+    var v'ladaJettonWallet = sc_0~load_msg_addr();
+    return (sc_0, (v'owner, v'houseWallet, v'ladaJettonWallet));
+}
+
+(slice, slice, slice, cell) $LadaEscrow$_contract_load() impure inline {
+    slice $sc = get_data().begin_parse();
+    int $loaded = $sc~load_int(1);
+    if ($loaded) {
+        return $sc~$LadaEscrow$_load();
+    }
+    else {
+        (slice $owner, slice $houseWallet, slice $ladaJettonWallet) = $sc~$LadaEscrow$init$_load();
+        $sc.end_parse();
+        return $LadaEscrow$_contract_init($owner, $houseWallet, $ladaJettonWallet);
+    }
+}
+
+() $LadaEscrow$_contract_store((slice, slice, slice, cell) v) impure inline {
+    builder b = begin_cell();
+    b = b.store_int(true, 1);
+    b = $LadaEscrow$_store(b, v);
+    set_data(b.end_cell());
+}
+
+;;
+;; Contract LadaEscrow functions
+;;
+
+(slice, slice, slice, cell) $LadaEscrow$_contract_init(slice $owner, slice $houseWallet, slice $ladaJettonWallet) impure inline {
+    var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = (null(), null(), null(), null());
+    $self'owner = $owner;
+    $self'houseWallet = $houseWallet;
+    $self'ladaJettonWallet = $ladaJettonWallet;
+    return ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races);
+}
+
+((slice, slice, slice, cell), ()) $LadaEscrow$_fun_sendJetton((slice, slice, slice, cell) $self, slice $to, int $amount, int $queryId) impure inline_ref {
+    var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = $self;
+    $global_send($SendParameters$_constructor_to_value_mode_body($self'ladaJettonWallet, 100000000, 1, $TokenTransfer$_store_cell($TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload($queryId, $amount, $to, $to, null(), 10000000, $global_emptySlice()), begin_cell())));
+    return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), ());
+}
+
+((slice, slice, slice, cell), tuple) $LadaEscrow$_fun_raceOf((slice, slice, slice, cell) $self, int $raceId) impure inline_ref {
+    var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = $self;
+    var $fresh$ret_0 = $Race$_load_opt(__tact_dict_get_uint_cell($self'races, 64, $raceId));
+    return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), $fresh$ret_0);
+}
+
+((slice, slice, slice, cell), slice) $LadaEscrow$_fun_owner((slice, slice, slice, cell) $self) impure inline_ref {
+    var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = $self;
+    var $fresh$ret_1 = $self'owner;
+    return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), $fresh$ret_1);
+}
+
+((slice, slice, slice, cell), slice) $LadaEscrow$_fun_houseWalletAddress((slice, slice, slice, cell) $self) impure inline_ref {
+    var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = $self;
+    var $fresh$ret_2 = $self'houseWallet;
+    return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), $fresh$ret_2);
+}
+
+((slice, slice, slice, cell), slice) $LadaEscrow$_fun_jettonWalletAddress((slice, slice, slice, cell) $self) impure inline_ref {
+    var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = $self;
+    var $fresh$ret_3 = $self'ladaJettonWallet;
+    return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), $fresh$ret_3);
+}
+
+;;
+;; Get methods of a Contract LadaEscrow
+;;
+
+_ %raceOf(int $raceId) method_id(122454) {
+    int $raceId = $raceId;
+    var self = $LadaEscrow$_contract_load();
+    var res = self~$LadaEscrow$_fun_raceOf($raceId);
+    return $Race$_to_opt_external(res);
+}
+
+_ %owner() method_id(83229) {
+    var self = $LadaEscrow$_contract_load();
+    var res = self~$LadaEscrow$_fun_owner();
+    return res;
+}
+
+_ %houseWalletAddress() method_id(94905) {
+    var self = $LadaEscrow$_contract_load();
+    var res = self~$LadaEscrow$_fun_houseWalletAddress();
+    return res;
+}
+
+_ %jettonWalletAddress() method_id(100873) {
+    var self = $LadaEscrow$_contract_load();
+    var res = self~$LadaEscrow$_fun_jettonWalletAddress();
+    return res;
+}
+
+;;
+;; Routing of a Contract LadaEscrow
+;;
+
+;; message opcode reader utility: only binary receivers
+;; Returns 32 bit message opcode, otherwise throws the "Invalid incoming message" exit code
+(slice, int) ~load_opcode_internal(slice s) asm( -> 1 0) "32 LDUQ 130 THROWIFNOT";
+
+() recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
+    
+    ;; Context
+    var cs = in_msg_cell.begin_parse();
+    cs~skip_bits(2);
+    var msg_bounceable = cs~load_int(1);
+    var msg_bounced = cs~load_int(1);
+    slice msg_sender_addr = cs~load_msg_addr();
+    __tact_context = (msg_bounceable, msg_sender_addr, msg_value, cs);
+    __tact_context_sender = msg_sender_addr;
+    
+    ;; Load contract data
+    var ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races) = $LadaEscrow$_contract_load();
+    
+    ;; Handle bounced messages
+    if (msg_bounced) { return (); }
+    int op = 0;
+    int in_msg_length = slice_bits(in_msg);
+    if (in_msg_length >= 32) {
+        op = in_msg~load_uint(32);
+        ;; Receive CreateRace message
+        if (op == 0x6c726300) {
+            var $msg'raceId = in_msg~load_uint(64);
+            var $msg'stake = in_msg~load_varuint16();
+            var $msg'player1 = in_msg~load_msg_addr();
+            var $msg'player2 = in_msg~load_msg_addr();
+            throw_unless(3669, ( equal_slices_bits(__tact_context_get_sender(), $self'owner) ));
+            throw_unless(59477, null?($Race$_load_opt(__tact_dict_get_uint_cell($self'races, 64, $msg'raceId))));
+            throw_unless(51945, ( ~ equal_slices_bits($msg'player1, $msg'player2) ));
+            throw_unless(44467, ($msg'stake > 0));
+            $self'races~__tact_dict_set_uint_cell(64, $msg'raceId, $Race$_store_cell($Race$_constructor_stake_player1_player2_deposited1_deposited2_state($msg'stake, $msg'player1, $msg'player2, false, false, 0), begin_cell()));
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+        ;; Receive TokenNotification message
+        if (op == 0x7362d09c) {
+            var $msg'queryId = in_msg~load_uint(64);
+            var $msg'amount = in_msg~load_varuint16();
+            var $msg'from = in_msg~load_msg_addr();
+            var $msg'forwardPayload = in_msg;
+            throw_unless(28511, ( equal_slices_bits(__tact_context_get_sender(), $self'ladaJettonWallet) ));
+            slice $payload = $msg'forwardPayload;
+            if (($Slice$_fun_bits($payload) < 64)) {
+                ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($msg'from, $msg'amount, 0);
+                $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+                return ();
+            }
+            int $raceId = $payload~load_uint(64);
+            tuple $maybeRace = $Race$_load_opt(__tact_dict_get_uint_cell($self'races, 64, $raceId));
+            if (null?($maybeRace)) {
+                ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($msg'from, $msg'amount, 0);
+                $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+                return ();
+            }
+            var ($r'stake, $r'player1, $r'player2, $r'deposited1, $r'deposited2, $r'state) = $Race$_not_null($maybeRace);
+            if (( (($r'state != 0)) ? (true) : (($msg'amount != $r'stake)) )) {
+                ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($msg'from, $msg'amount, 0);
+                $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+                return ();
+            }
+            if (( (( equal_slices_bits($msg'from, $r'player1) )) ? ((~ $r'deposited1)) : (false) )) {
+                $r'deposited1 = true;
+            } elseif (( (( equal_slices_bits($msg'from, $r'player2) )) ? ((~ $r'deposited2)) : (false) )) {
+                $r'deposited2 = true;
+            } else {
+                ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($msg'from, $msg'amount, 0);
+                $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+                return ();
+            }
+            if (( ($r'deposited1) ? ($r'deposited2) : (false) )) {
+                $r'state = 1;
+            }
+            $self'races~__tact_dict_set_uint_cell(64, $raceId, $Race$_store_cell(($r'stake, $r'player1, $r'player2, $r'deposited1, $r'deposited2, $r'state), begin_cell()));
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+        ;; Receive Payout message
+        if (op == 0x6c726304) {
+            var $msg'raceId = in_msg~load_uint(64);
+            var $msg'winner = in_msg~load_msg_addr();
+            var $msg'seed = in_msg~load_uint(256);
+            throw_unless(20616, ( equal_slices_bits(__tact_context_get_sender(), $self'owner) ));
+            tuple $maybeRace = $Race$_load_opt(__tact_dict_get_uint_cell($self'races, 64, $msg'raceId));
+            throw_unless(2961, (~ null?($maybeRace)));
+            var ($r'stake, $r'player1, $r'player2, $r'deposited1, $r'deposited2, $r'state) = $Race$_not_null($maybeRace);
+            throw_unless(23616, ($r'state == 1));
+            throw_unless(16285, ( (( equal_slices_bits($msg'winner, $r'player1) )) ? (true) : (( equal_slices_bits($msg'winner, $r'player2) )) ));
+            slice $loser = $r'player2;
+            if (( equal_slices_bits($msg'winner, $r'player2) )) {
+                $loser = $r'player1;
+            }
+            int $pot = ($r'stake * 2);
+            int $houseFee = (($pot * 500) / 10000);
+            int $payout = ($pot - $houseFee);
+            ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($msg'winner, $payout, $msg'raceId);
+            $global_emit($WinnerDeclared$_store_cell($WinnerDeclared$_constructor_raceId_winner_loser_combinedSeed_pot_payout_houseFee($msg'raceId, $msg'winner, $loser, $msg'seed, $pot, $payout, $houseFee), begin_cell()));
+            $self'races~__tact_dict_delete_uint(64, $msg'raceId);
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+        ;; Receive Refund message
+        if (op == 0x6c726305) {
+            var $msg'raceId = in_msg~load_uint(64);
+            throw_unless(37861, ( equal_slices_bits(__tact_context_get_sender(), $self'owner) ));
+            tuple $maybeRace = $Race$_load_opt(__tact_dict_get_uint_cell($self'races, 64, $msg'raceId));
+            throw_unless(2961, (~ null?($maybeRace)));
+            var ($r'stake, $r'player1, $r'player2, $r'deposited1, $r'deposited2, $r'state) = $Race$_not_null($maybeRace);
+            throw_unless(57529, ( (($r'state == 0)) ? (true) : (($r'state == 1)) ));
+            if ($r'deposited1) {
+                ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($r'player1, $r'stake, $msg'raceId);
+            }
+            if ($r'deposited2) {
+                ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($r'player2, $r'stake, $msg'raceId);
+            }
+            $global_emit($RaceRefunded$_store_cell($RaceRefunded$_constructor_raceId_player1_player2_refundAmount($msg'raceId, $r'player1, $r'player2, $r'stake), begin_cell()));
+            $self'races~__tact_dict_delete_uint(64, $msg'raceId);
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+        ;; Receive WithdrawJettons message
+        if (op == 0x6c726306) {
+            var $msg'amount = in_msg~load_varuint16();
+            var $msg'to = in_msg~load_msg_addr();
+            throw_unless(15525, ( equal_slices_bits(__tact_context_get_sender(), $self'owner) ));
+            ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_sendJetton($msg'to, $msg'amount, 0);
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+        ;; Receive SetJettonWallet message
+        if (op == 0x6c726307) {
+            var $msg'wallet = in_msg~load_msg_addr();
+            throw_unless(26626, ( equal_slices_bits(__tact_context_get_sender(), $self'owner) ));
+            $self'ladaJettonWallet = $msg'wallet;
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+        ;; Receive SetPlayer2 message
+        if (op == 0x6c726308) {
+            var $msg'raceId = in_msg~load_uint(64);
+            var $msg'player2 = in_msg~load_msg_addr();
+            throw_unless(51833, ( equal_slices_bits(__tact_context_get_sender(), $self'owner) ));
+            tuple $maybeRace = $Race$_load_opt(__tact_dict_get_uint_cell($self'races, 64, $msg'raceId));
+            throw_unless(2961, (~ null?($maybeRace)));
+            var ($r'stake, $r'player1, $r'player2, $r'deposited1, $r'deposited2, $r'state) = $Race$_not_null($maybeRace);
+            throw_unless(20273, ($r'state == 0));
+            throw_unless(42864, (~ $r'deposited2));
+            throw_unless(51945, ( ~ equal_slices_bits($msg'player2, $r'player1) ));
+            $r'player2 = $msg'player2;
+            $self'races~__tact_dict_set_uint_cell(64, $msg'raceId, $Race$_store_cell(($r'stake, $r'player1, $r'player2, $r'deposited1, $r'deposited2, $r'state), begin_cell()));
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+        ;; Receive Deploy message
+        if (op == 0x946a98b6) {
+            var $deploy'queryId = in_msg~load_uint(64);
+            ($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)~$LadaEscrow$_fun_notify($DeployOk$_store_cell($DeployOk$_constructor_queryId($deploy'queryId), begin_cell()));
+            $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+            return ();
+        }
+        
+    }
+    ;; Empty Receiver and Text Receivers
+    var text_op = slice_hash(in_msg);
+    ;; Receive "withdrawTon" message
+    if (text_op == 0x45fbdc04db11753bce1c6ba0df964b42095214d2014b759eaa0351645c26defb) {
+        throw_unless(35499, ( equal_slices_bits(__tact_context_get_sender(), $self'owner) ));
+        $global_send($SendParameters$_constructor_to_value_mode_body($self'owner, 0, 130, $global_emptyCell()));
+        $LadaEscrow$_contract_store(($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races));
+        return ();
+    }
+    ;; Throw if not handled
+    throw(130);
+}
+
+
+() __tact_selector_hack_asm() impure asm """
+@atend @ 1 {
+        execute current@ context@ current!
+        {
+            // The core idea of this function is to save gas by avoiding unnecessary dict jump, when recv_internal/recv_external is called
+            // We want to extract recv_internal/recv_external from the dict and select needed function
+            // not by jumping to the needed function by it's index, but by using usual IF statements.
+
+            }END> b> // Close previous builder, now we have a cell of previous code on top of the stack
+
+            <{ // Start of the new code builder
+                SETCP0
+                // Swap the new code builder with the previous code, now we have previous code on top of the stack
+                swap
+                // Transform cell to slice and load first ref from the previous code, now we have the dict on top of the stack
+                <s ref@
+
+                // Extract the recv_internal from the dict
+                dup 0 swap @procdictkeylen idict@ { "internal shortcut error" abort } ifnot
+                swap
+
+                // Delete the recv_internal from the dict
+                0 swap @procdictkeylen idict- drop
+                // Delete the recv_external from the dict (it's okay if it's not there)
+                -1 swap @procdictkeylen idict- drop
+                // Delete the __tact_selector_hack from the dict
+                65535 swap @procdictkeylen idict- drop
+
+                // Bring the code builder from the bottom of the stack
+                // because if recv_external extraction is optional, and the number of elements on the stack is not fixed
+                depth 1- roll
+                // Swap with the dict from which we extracted recv_internal and (maybe) recv_external
+                swap
+
+                // Check if the dict is empty
+                dup null?
+                // Store a copy of this flag in the bottom of the stack
+                dup depth 1- -roll
+                {
+                    // If the dict is empty, just drop it (it will be null if it's empty)
+                    drop
+                }
+                {
+                    // If the dict is not empty, prepare continuation to be stored in c3
+                    <{
+                        // Save this dict as first ref in this continuation, it will be pushed in runtime by DICTPUSHCONST
+                        swap @procdictkeylen DICTPUSHCONST
+                        // Jump to the needed function by it's index
+                        DICTIGETJMPZ
+                        // If such key is not found, throw 11 along with the key as an argument
+                        11 THROWARG
+                    }> PUSHCONT
+                    // Store the continuation in c3
+                    c3 POP
+                } cond
+
+                // Function id is on top of the (runtime) stack
+                DUP IFNOTJMP:<{
+                    // place recv_internal here
+                    DROP swap @addop
+                }>
+
+                // Bring back the flag, indicating if the dict is empty or not from the bottom of the stack
+                depth 1- roll
+                {
+                    // If the dict is empty, throw 11
+                    11 THROWARG
+                }
+                {
+                    // If the dict is not empty, jump to continuation from c3
+                    c3 PUSH JMPX
+                } cond
+            }> b>
+        } : }END>c
+        current@ context! current!
+    } does @atend !
+""";
+
+() __tact_selector_hack() method_id(65535) {
+    return __tact_selector_hack_asm();
+}

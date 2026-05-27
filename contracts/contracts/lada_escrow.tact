@@ -33,7 +33,9 @@ const HOUSE_FEE_BPS: Int = 500;            // 5%  stays in contract
 const BPS_DENOMINATOR: Int = 10000;
 
 // ───── TON gas budget for outbound jetton transfers ─────────────────
-const JETTON_FORWARD_TON: Int = ton("0.05");
+const JETTON_FORWARD_TON: Int = ton("0.1");   // 0.1 TON required: jetton wallet needs
+                                               // ~0.04 for computation + 0.01 notify +
+                                               // return excess; 0.05 was insufficient.
 const JETTON_NOTIFY_TON: Int = ton("0.01");
 
 // ───── Race states ──────────────────────────────────────────────────

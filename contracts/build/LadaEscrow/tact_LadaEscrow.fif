@@ -1,0 +1,1067 @@
+// automatically generated from `/stdlib/std/stdlib.fc` `C:/Users/danie/Documents/Claude/Projects/Lada car racing/contracts/build/LadaEscrow/tact_LadaEscrow.fc` 
+PROGRAM{
+  DECLPROC __tact_context_get
+  DECLPROC __tact_context_get_sender
+  DECLPROC __tact_dict_get_uint_cell
+  DECLPROC __tact_dict_set_uint_cell
+  DECLPROC $DeployOk$_store
+  DECLPROC $DeployOk$_store_cell
+  DECLPROC $WinnerDeclared$_store
+  DECLPROC $WinnerDeclared$_store_cell
+  DECLPROC $RaceRefunded$_store
+  DECLPROC $RaceRefunded$_store_cell
+  DECLPROC $TokenTransfer$_store
+  DECLPROC $TokenTransfer$_store_cell
+  DECLPROC $Race$_store
+  DECLPROC $Race$_store_cell
+  DECLPROC $Race$_load
+  DECLPROC $Race$_as_optional
+  DECLPROC $Race$_load_opt
+  DECLPROC $LadaEscrow$_store
+  DECLPROC $LadaEscrow$_load
+  DECLPROC $Context$_get_value
+  DECLPROC $Race$_not_null
+  DECLPROC $Race$_to_tuple
+  DECLPROC $Race$_to_opt_tuple
+  DECLPROC $Race$_to_opt_external
+  DECLPROC $LadaEscrow$init$_load
+  DECLPROC $LadaEscrow$_contract_init
+  DECLPROC $LadaEscrow$_contract_load
+  DECLPROC $LadaEscrow$_contract_store
+  DECLPROC $global_emit
+  DECLPROC $SendParameters$_constructor_to_value_mode_body
+  DECLPROC $TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload
+  DECLPROC $LadaEscrow$_fun_sendJetton
+  DECLPROC $LadaEscrow$_fun_raceOf
+  DECLPROC $LadaEscrow$_fun_owner
+  DECLPROC $LadaEscrow$_fun_houseWalletAddress
+  DECLPROC $LadaEscrow$_fun_jettonWalletAddress
+  DECLPROC $MessageParameters$_constructor_bounce_to_value_mode_body
+  DECLPROC $LadaEscrow$_fun_notify
+  DECLPROC $Race$_constructor_stake_player1_player2_deposited1_deposited2_state
+  DECLPROC $WinnerDeclared$_constructor_raceId_winner_loser_combinedSeed_pot_payout_houseFee
+  DECLPROC $RaceRefunded$_constructor_raceId_player1_player2_refundAmount
+  DECLPROC $DeployOk$_constructor_queryId
+  122454 DECLMETHOD %raceOf
+  83229 DECLMETHOD %owner
+  94905 DECLMETHOD %houseWalletAddress
+  100873 DECLMETHOD %jettonWalletAddress
+  DECLPROC recv_internal
+  65535 DECLMETHOD __tact_selector_hack
+  DECLGLOBVAR __tact_context
+  DECLGLOBVAR __tact_context_sender
+  DECLGLOBVAR __tact_child_contract_codes
+  DECLGLOBVAR __tact_randomized
+  __tact_context_get PROCINLINE:<{
+    __tact_context GETGLOB
+    4 UNTUPLE
+  }>
+  __tact_context_get_sender PROCINLINE:<{
+    __tact_context_sender GETGLOB
+  }>
+  __tact_dict_get_uint_cell PROCINLINE:<{
+    -ROT
+    DICTUGETREF
+    NULLSWAPIFNOT
+    IF:<{
+    }>ELSE<{
+      DROP
+      PUSHNULL
+    }>
+  }>
+  __tact_dict_set_uint_cell PROCINLINE:<{
+    DUP
+    ISNULL
+    IF:<{
+      DROP
+      -ROT
+      DICTUDEL
+      DROP
+    }>ELSE<{
+      s1 s3 s3 XCHG3
+      DICTUSETREF
+    }>
+  }>
+  $DeployOk$_store PROCINLINE:<{
+    2952335191 PUSHINT
+    ROT
+    32 STU
+    64 STU
+  }>
+  $DeployOk$_store_cell PROCINLINE:<{
+    SWAP
+    $DeployOk$_store INLINECALLDICT
+    ENDC
+  }>
+  $WinnerDeclared$_store PROCINLINE:<{
+    1819436017 PUSHINT
+    s0 s8 XCHG2
+    32 STU
+    s1 s6 XCHG
+    64 STU
+    s1 s4 XCHG
+    STSLICE
+    s1 s2 XCHG
+    STSLICE
+    256 STU
+    SWAP
+    STVARUINT16
+    NEWC
+    ROT
+    STVARUINT16
+    ROT
+    STVARUINT16
+    STBREFR
+  }>
+  $WinnerDeclared$_store_cell PROCINLINE:<{
+    7 -ROLL
+    $WinnerDeclared$_store INLINECALLDICT
+    ENDC
+  }>
+  $RaceRefunded$_store PROCINLINE:<{
+    1819436018 PUSHINT
+    s0 s5 XCHG2
+    32 STU
+    s1 s3 XCHG
+    64 STU
+    STSLICE
+    STSLICE
+    SWAP
+    STVARUINT16
+  }>
+  $RaceRefunded$_store_cell PROCINLINE:<{
+    4 -ROLL
+    $RaceRefunded$_store INLINECALLDICT
+    ENDC
+  }>
+  $TokenTransfer$_store PROCINLINE:<{
+    260734629 PUSHINT
+    s0 s8 XCHG2
+    32 STU
+    s1 s6 XCHG
+    64 STU
+    s0 s4 XCHG2
+    STVARUINT16
+    s1 s2 XCHG
+    STSLICE
+    STSLICE
+    STOPTREF
+    SWAP
+    STVARUINT16
+    STSLICE
+  }>
+  $TokenTransfer$_store_cell PROCINLINE:<{
+    7 -ROLL
+    $TokenTransfer$_store INLINECALLDICT
+    ENDC
+  }>
+  $Race$_store PROCINLINE:<{
+    s6 s5 XCHG2
+    STVARUINT16
+    s1 s3 XCHG
+    STSLICE
+    STSLICE
+    1 STI
+    s1 s2 XCHG
+    1 STI
+    8 STU
+  }>
+  $Race$_store_cell PROCINLINE:<{
+    6 -ROLL
+    $Race$_store INLINECALLDICT
+    ENDC
+  }>
+  $Race$_load PROCINLINE:<{
+    LDVARUINT16
+    LDMSGADDR
+    LDMSGADDR
+    1 LDI
+    1 LDI
+    8 LDU
+    6 -ROLL
+  }>
+  $Race$_as_optional PROCINLINE:<{
+        6 TUPLE
+  }>
+  $Race$_load_opt PROCINLINE:<{
+    DUP
+    ISNULL
+    IF:<{
+      DROP
+      PUSHNULL
+    }>ELSE<{
+      CTOS
+      $Race$_load INLINECALLDICT
+      1 6 BLKDROP2
+      $Race$_as_optional INLINECALLDICT
+    }>
+  }>
+  $LadaEscrow$_store PROCINLINE:<{
+    s3 s4 XCHG2
+    STSLICE
+    STSLICE
+    STSLICE
+    STDICT
+  }>
+  $LadaEscrow$_load PROCINLINE:<{
+    LDMSGADDR
+    LDMSGADDR
+    LDMSGADDR
+    LDDICT
+    4 -ROLL
+  }>
+  $Context$_get_value PROCINLINE:<{
+    s1 s3 XCHG
+    3 BLKDROP
+  }>
+  $Race$_not_null PROCINLINE:<{
+    DUP
+    ISNULL
+    128 THROWIF
+        6 UNTUPLE
+  }>
+  $Race$_to_tuple PROCINLINE:<{
+        6 TUPLE
+  }>
+  $Race$_to_opt_tuple PROCINLINE:<{
+    DUP
+    ISNULL
+    IF:<{
+      DROP
+      PUSHNULL
+    }>ELSE<{
+      $Race$_not_null INLINECALLDICT
+      $Race$_to_tuple INLINECALLDICT
+    }>
+  }>
+  $Race$_to_opt_external PROCINLINE:<{
+    $Race$_to_opt_tuple INLINECALLDICT
+    DUP
+    ISNULL
+    IF:<{
+      DROP
+      PUSHNULL
+    }>ELSE<{
+    }>
+  }>
+  $LadaEscrow$init$_load PROCINLINE:<{
+    LDMSGADDR
+    LDMSGADDR
+    LDMSGADDR
+    3 -ROLL
+  }>
+  $LadaEscrow$_contract_init PROCINLINE:<{
+    PUSHNULL
+  }>
+  $LadaEscrow$_contract_load PROCINLINE:<{
+    c4 PUSH
+    CTOS
+    1 LDI
+    SWAP
+    IF:<{
+      $LadaEscrow$_load INLINECALLDICT
+      1 4 BLKDROP2
+    }>ELSE<{
+      $LadaEscrow$init$_load INLINECALLDICT
+      s0 s3 XCHG
+      ENDS
+      ROT
+      $LadaEscrow$_contract_init INLINECALLDICT
+    }>
+  }>
+  $LadaEscrow$_contract_store PROCINLINE:<{
+    NEWC
+    TRUE
+    SWAP
+    1 STI
+    4 -ROLL
+    $LadaEscrow$_store INLINECALLDICT
+    ENDC
+    c4 POP
+  }>
+  $global_emit PROCINLINE:<{
+        NEWC
+    15211807202738752817960438464513 PUSHINT
+    SWAP
+    104 STU
+        STREF
+        ENDC
+    0 PUSHINT
+        SENDRAWMSG
+  }>
+  $SendParameters$_constructor_to_value_mode_body PROCINLINE:<{
+    2SWAP
+    PUSHNULL
+    PUSHNULL
+    s0 s0 s3 XCHG3
+    TRUE
+  }>
+  $TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload PROCINLINE:<{
+  }>
+  $LadaEscrow$_fun_sendJetton PROCREF:<{
+    100000000 PUSHINT
+    1 PUSHINT
+    PUSHNULL
+    10000000 PUSHINT
+        b{} PUSHSLICE
+    s7 PUSH
+    s5 s7 XCHG
+    s0 s4 XCHG
+    s0 s8 XCHG
+    3 -ROLL
+    $TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload INLINECALLDICT
+    NEWC
+    $TokenTransfer$_store_cell INLINECALLDICT
+    s4 PUSH
+    s3 s3 XCHG2
+    $SendParameters$_constructor_to_value_mode_body INLINECALLDICT
+        NEWC
+        b{01} STSLICECONST  // store tag = $0 and ihr_disabled = true
+        1 STI               // store `bounce`
+        b{000} STSLICECONST // store bounced = false and src = addr_none
+        STSLICE             // store `to`
+        SWAP
+        STGRAMS             // store `value`
+        105 PUSHINT         // 1 + 4 + 4 + 64 + 32
+        STZEROES            // store currency_collection, ihr_fee, fwd_fee, created_lt and created_at
+        // → Stack state
+        // s0: Builder
+        // s1: `data`
+        // s2: `code`
+        // s3: `body`
+        // s4: `mode`
+        // Group 2: Placing the Builder after code and data, then checking those for nullability
+        s2 XCHG0
+        DUP2
+        ISNULL
+        SWAP
+        ISNULL
+        AND
+        // → Stack state
+        // s0: -1 (true) if `data` and `code` are both null, 0 (false) otherwise
+        // s1: `code`
+        // s2: `data`
+        // s3: Builder
+        // s4: `body`
+        // s5: `mode`
+        // Group 3: Left branch of the IFELSE, executed if s0 is -1 (true)
+        <{
+            DROP2 // drop `data` and `code`, since either of those is null
+            b{0} STSLICECONST
+        }> PUSHCONT
+        // Group 3: Right branch of the IFELSE, executed if s0 is 0 (false)
+        <{
+            // _ split_depth:(Maybe (## 5))
+            //   special:(Maybe TickTock)
+            //   code:(Maybe ^Cell)
+            //   data:(Maybe ^Cell)
+            //   library:(Maybe ^Cell)
+            // = StateInit;
+            ROT                // place message Builder on top
+            b{10} STSLICECONST // store Maybe = true, Either = false
+            // Start composing inlined StateInit
+            b{00} STSLICECONST // store split_depth and special first
+            STDICT             // store code
+            STDICT             // store data
+            b{0} STSLICECONST  // store library
+        }> PUSHCONT
+        // Group 3: IFELSE that does the branching shown above
+        IFELSE
+        // → Stack state
+        // s0: Builder
+        // s1: null or StateInit
+        // s2: `body`
+        // s3: `mode`
+        // Group 4: Finalizing the message
+        STDICT // store `body` as ref with an extra Maybe bit, since `body` might be null
+        ENDC
+        // → Stack state
+        // s0: Cell
+        // s1: `mode`
+        // Group 5: Sending the message, with `mode` on top
+        SWAP
+        SENDRAWMSG // https://github.com/tact-lang/tact/issues/1558
+  }>
+  $LadaEscrow$_fun_raceOf PROCREF:<{
+    64 PUSHINT
+    s2 PUSH
+    s0 s2 XCHG
+    __tact_dict_get_uint_cell INLINECALLDICT
+    $Race$_load_opt INLINECALLDICT
+  }>
+  $LadaEscrow$_fun_owner PROCREF:<{
+    s3 PUSH
+  }>
+  $LadaEscrow$_fun_houseWalletAddress PROCREF:<{
+    s2 PUSH
+  }>
+  $LadaEscrow$_fun_jettonWalletAddress PROCREF:<{
+    OVER
+  }>
+  $MessageParameters$_constructor_bounce_to_value_mode_body PROCINLINE:<{
+    s3 s3 XCHG2
+    s0 s4 XCHG
+  }>
+  $LadaEscrow$_fun_notify PROCINLINE:<{
+    __tact_context_get_sender INLINECALLDICT
+    FALSE
+    0 PUSHINT
+    s0 s3 XCHG2
+    66 PUSHINT
+    SWAP
+    $MessageParameters$_constructor_bounce_to_value_mode_body INLINECALLDICT
+        NEWC
+        b{01} STSLICECONST  // store tag = $0 and ihr_disabled = true
+        1 STI               // store `bounce`
+        b{000} STSLICECONST // store bounced = false and src = addr_none
+        STSLICE             // store `to`
+        SWAP
+        STGRAMS             // store `value`
+        106 PUSHINT         // 1 + 4 + 4 + 64 + 32 + 1
+        STZEROES
+        // → Stack state
+        // s0: Builder
+        // s1: `body`
+        // s2: `mode`
+        STDICT
+        ENDC
+        SWAP
+        SENDRAWMSG
+  }>
+  $Race$_constructor_stake_player1_player2_deposited1_deposited2_state PROCINLINE:<{
+  }>
+  $WinnerDeclared$_constructor_raceId_winner_loser_combinedSeed_pot_payout_houseFee PROCINLINE:<{
+  }>
+  $RaceRefunded$_constructor_raceId_player1_player2_refundAmount PROCINLINE:<{
+  }>
+  $DeployOk$_constructor_queryId PROCINLINE:<{
+  }>
+  %raceOf PROC:<{
+    $LadaEscrow$_contract_load INLINECALLDICT
+    4 ROLL
+    $LadaEscrow$_fun_raceOf INLINECALLDICT
+    4 1 BLKDROP2
+    $Race$_to_opt_external INLINECALLDICT
+  }>
+  %owner PROC:<{
+    $LadaEscrow$_contract_load INLINECALLDICT
+    $LadaEscrow$_fun_owner INLINECALLDICT
+    4 1 BLKDROP2
+  }>
+  %houseWalletAddress PROC:<{
+    $LadaEscrow$_contract_load INLINECALLDICT
+    $LadaEscrow$_fun_houseWalletAddress INLINECALLDICT
+    4 1 BLKDROP2
+  }>
+  %jettonWalletAddress PROC:<{
+    $LadaEscrow$_contract_load INLINECALLDICT
+    $LadaEscrow$_fun_jettonWalletAddress INLINECALLDICT
+    4 1 BLKDROP2
+  }>
+  recv_internal PROC:<{
+    c2 SAVE
+    SAMEALTSAVE
+    SWAP
+    CTOS
+    2 PUSHINT
+    SDSKIPFIRST
+    1 LDI
+    1 LDI
+    LDMSGADDR
+    OVER
+    s3 s4 XCHG
+    s6 s6 XCHG2
+    4 TUPLE
+    __tact_context SETGLOB
+    s0 s2 XCHG
+    __tact_context_sender SETGLOB
+    $LadaEscrow$_contract_load INLINECALLDICT
+    s0 s5 XCHG
+    IFJMP:<{
+      5 BLKDROP
+    }>
+    s3 PUSH
+    SBITS
+    31 GTINT
+    IF:<{
+      s0 s3 XCHG
+      32 LDU
+      OVER
+      1819435776 PUSHINT
+      EQUAL
+      IFJMP:<{
+        NIP
+        64 LDU
+        LDVARUINT16
+        LDMSGADDR
+        LDMSGADDR
+        DROP
+        3669 PUSHINT
+        __tact_context_get_sender INLINECALLDICT
+        s7 PUSH
+        SDEQ
+        THROWANYIFNOT
+        59477 PUSHINT
+        s8 PUSH
+        64 PUSHINT
+        s6 PUSH
+        __tact_dict_get_uint_cell INLINECALLDICT
+        $Race$_load_opt INLINECALLDICT
+        ISNULL
+        THROWANYIFNOT
+        51945 PUSHINT
+        s2 s1 PUSH2
+        SDEQ
+        NOT
+        THROWANYIFNOT
+        44467 PUSHINT
+        s3 PUSH
+        0 GTINT
+        THROWANYIFNOT
+        64 PUSHINT
+        3 -ROLL
+        FALSE
+        FALSE
+        0 PUSHINT
+        $Race$_constructor_stake_player1_player2_deposited1_deposited2_state INLINECALLDICT
+        NEWC
+        $Race$_store_cell INLINECALLDICT
+        s3 s6 XCHG
+        s1 s2 XCHG
+        __tact_dict_set_uint_cell INLINECALLDICT
+        s3 s3 s0 XCHG3
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      OVER
+      1935855772 PUSHINT
+      EQUAL
+      IFJMP:<{
+        NIP
+        64 LDU
+        NIP
+        LDVARUINT16
+        LDMSGADDR
+        28511 PUSHINT
+        __tact_context_get_sender INLINECALLDICT
+        s7 PUSH
+        SDEQ
+        THROWANYIFNOT
+        DUP
+            SBITS
+        64 LESSINT
+        IFJMP:<{
+          DROP
+          s3 s5 XCHG
+          s2 s4 XCHG
+          s3 s0 s0 XCHG3
+          0 PUSHINT
+          $LadaEscrow$_fun_sendJetton INLINECALLDICT
+          $LadaEscrow$_contract_store INLINECALLDICT
+          RETALT
+        }>
+        64 LDU
+        DROP
+        s6 PUSH
+        64 PUSHINT
+        s2 PUSH
+        __tact_dict_get_uint_cell INLINECALLDICT
+        $Race$_load_opt INLINECALLDICT
+        DUP
+        ISNULL
+        IFJMP:<{
+          2DROP
+          s3 s5 XCHG
+          s2 s4 XCHG
+          s3 s0 s0 XCHG3
+          0 PUSHINT
+          $LadaEscrow$_fun_sendJetton INLINECALLDICT
+          $LadaEscrow$_contract_store INLINECALLDICT
+          RETALT
+        }>
+        $Race$_not_null INLINECALLDICT
+        DUP
+        0 NEQINT
+        IF:<{
+          TRUE
+        }>ELSE<{
+          s8 s5 PUSH2
+          NEQ
+        }>
+        IFJMP:<{
+          7 BLKDROP
+          s3 s5 XCHG
+          s2 s4 XCHG
+          s3 s0 s0 XCHG3
+          0 PUSHINT
+          $LadaEscrow$_fun_sendJetton INLINECALLDICT
+          $LadaEscrow$_contract_store INLINECALLDICT
+          RETALT
+        }>
+        s7 s4 PUSH2
+        SDEQ
+        IF:<{
+          s2 PUSH
+          NOT
+        }>ELSE<{
+          FALSE
+        }>
+        IF:<{
+          s2 POP
+          s6 POP
+          s6 POP
+          TRUE
+        }>ELSE<{
+          s7 s3 PUSH2
+          SDEQ
+          IF:<{
+            SWAP
+            NOT
+          }>ELSE<{
+            NIP
+            FALSE
+          }>
+          IFNOTJMP:<{
+            6 BLKDROP
+            s3 s5 XCHG
+            s2 s4 XCHG
+            s3 s0 s0 XCHG3
+            0 PUSHINT
+            $LadaEscrow$_fun_sendJetton INLINECALLDICT
+            $LadaEscrow$_contract_store INLINECALLDICT
+            RETALT
+          }>
+          s7 POP
+          TRUE
+          s6 POP
+        }>
+        DUP
+        IF:<{
+          s5 PUSH
+        }>ELSE<{
+          FALSE
+        }>
+        IF:<{
+          1 PUSHINT
+          s7 POP
+        }>
+        4 ROLL
+        64 PUSHINT
+        s6 s7 XCHG2
+        NEWC
+        $Race$_store_cell INLINECALLDICT
+        s3 s6 XCHG
+        __tact_dict_set_uint_cell INLINECALLDICT
+        s3 s3 s0 XCHG3
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      OVER
+      1819435780 PUSHINT
+      EQUAL
+      IFJMP:<{
+        NIP
+        64 LDU
+        LDMSGADDR
+        256 LDU
+        DROP
+        20616 PUSHINT
+        __tact_context_get_sender INLINECALLDICT
+        s6 PUSH
+        SDEQ
+        THROWANYIFNOT
+        s6 PUSH
+        64 PUSHINT
+        s4 PUSH
+        __tact_dict_get_uint_cell INLINECALLDICT
+        $Race$_load_opt INLINECALLDICT
+        2961 PUSHINT
+        OVER
+        ISNULL
+        NOT
+        THROWANYIFNOT
+        $Race$_not_null INLINECALLDICT
+        NIP
+        23616 PUSHINT
+        s2 POP
+        1 EQINT
+        THROWANYIFNOT
+        16285 PUSHINT
+        s5 s2 PUSH2
+        SDEQ
+        IF:<{
+          TRUE
+        }>ELSE<{
+          s5 s1 PUSH2
+          SDEQ
+        }>
+        THROWANYIFNOT
+        s4 s0 PUSH2
+        SDEQ
+        IF:<{
+          DROP
+        }>ELSE<{
+          NIP
+        }>
+        SWAP
+        1 LSHIFT#
+        DUP
+        500 PUSHINT
+        MUL
+        10000 PUSHINT
+        DIV
+        2DUP
+        SUB
+        s3 s8 XCHG
+        s7 s9 s10 XCHG3
+        s5 s10 s6 PUSH3
+        $LadaEscrow$_fun_sendJetton INLINECALLDICT
+        s6 PUSH
+        s0 s6 XCHG
+        s0 s5 XCHG
+        s4 s9 XCHG
+        s8 s1 s3 XCHG3
+        s11 s10 XCHG2
+        $WinnerDeclared$_constructor_raceId_winner_loser_combinedSeed_pot_payout_houseFee INLINECALLDICT
+        NEWC
+        $WinnerDeclared$_store_cell INLINECALLDICT
+        $global_emit INLINECALLDICT
+        s0 s4 XCHG2
+        64 PUSHINT
+            DICTUDEL
+        DROP
+        s1 s3 XCHG
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      OVER
+      1819435781 PUSHINT
+      EQUAL
+      IFJMP:<{
+        NIP
+        64 LDU
+        DROP
+        37861 PUSHINT
+        __tact_context_get_sender INLINECALLDICT
+        s4 PUSH
+        SDEQ
+        THROWANYIFNOT
+        s4 PUSH
+        64 PUSHINT
+        s2 PUSH
+        __tact_dict_get_uint_cell INLINECALLDICT
+        $Race$_load_opt INLINECALLDICT
+        2961 PUSHINT
+        OVER
+        ISNULL
+        NOT
+        THROWANYIFNOT
+        $Race$_not_null INLINECALLDICT
+        57529 PUSHINT
+        OVER
+        0 EQINT
+        IF:<{
+          NIP
+          TRUE
+        }>ELSE<{
+          SWAP
+          1 EQINT
+        }>
+        THROWANYIFNOT
+        SWAP
+        IF:<{
+          s3 s6 XCHG
+          s5 s7 s8 XCHG3
+          s5 s6 s4 PUSH3
+          $LadaEscrow$_fun_sendJetton INLINECALLDICT
+          s7 s8 XCHG2
+          s3 s6 XCHG
+          s2 s5 XCHG
+        }>
+        IF:<{
+          s3 s5 XCHG
+          s4 s6 s7 XCHG3
+          s7 s4 s5 PUSH3
+          $LadaEscrow$_fun_sendJetton INLINECALLDICT
+          s6 s7 XCHG2
+          s3 s5 XCHG
+          s2 s4 XCHG
+        }>
+        s3 PUSH
+        s0 s3 XCHG
+        $RaceRefunded$_constructor_raceId_player1_player2_refundAmount INLINECALLDICT
+        NEWC
+        $RaceRefunded$_store_cell INLINECALLDICT
+        $global_emit INLINECALLDICT
+        s0 s4 XCHG2
+        64 PUSHINT
+            DICTUDEL
+        DROP
+        s3 s3 s0 XCHG3
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      OVER
+      1819435782 PUSHINT
+      EQUAL
+      IFJMP:<{
+        NIP
+        LDVARUINT16
+        LDMSGADDR
+        DROP
+        15525 PUSHINT
+        __tact_context_get_sender INLINECALLDICT
+        s5 PUSH
+        SDEQ
+        THROWANYIFNOT
+        s3 s5 XCHG
+        s2 s4 XCHG
+        s3 s0 s0 XCHG3
+        0 PUSHINT
+        $LadaEscrow$_fun_sendJetton INLINECALLDICT
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      OVER
+      1819435783 PUSHINT
+      EQUAL
+      IFJMP:<{
+        NIP
+        s3 POP
+        s0 s2 XCHG
+        LDMSGADDR
+        DROP
+        26626 PUSHINT
+        __tact_context_get_sender INLINECALLDICT
+        s3 PUSH
+        SDEQ
+        THROWANYIFNOT
+        s0 s3 XCHG2
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      OVER
+      1819435784 PUSHINT
+      EQUAL
+      IFJMP:<{
+        NIP
+        64 LDU
+        LDMSGADDR
+        DROP
+        51833 PUSHINT
+        __tact_context_get_sender INLINECALLDICT
+        s5 PUSH
+        SDEQ
+        THROWANYIFNOT
+        s5 PUSH
+        64 PUSHINT
+        s3 PUSH
+        __tact_dict_get_uint_cell INLINECALLDICT
+        $Race$_load_opt INLINECALLDICT
+        2961 PUSHINT
+        OVER
+        ISNULL
+        NOT
+        THROWANYIFNOT
+        $Race$_not_null INLINECALLDICT
+        s3 POP
+        20273 PUSHINT
+        s3 PUSH
+        0 EQINT
+        THROWANYIFNOT
+        42864 PUSHINT
+        OVER
+        NOT
+        THROWANYIFNOT
+        51945 PUSHINT
+        s6 s4 PUSH2
+        SDEQ
+        NOT
+        THROWANYIFNOT
+        64 PUSHINT
+        s0 s6 XCHG
+        s0 s3 XCHG
+        NEWC
+        $Race$_store_cell INLINECALLDICT
+        s3 s6 XCHG
+        s1 s2 XCHG
+        __tact_dict_set_uint_cell INLINECALLDICT
+        s3 s3 s0 XCHG3
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      SWAP
+      2490013878 PUSHINT
+      EQUAL
+      IFJMP:<{
+        64 LDU
+        DROP
+        $DeployOk$_constructor_queryId INLINECALLDICT
+        NEWC
+        $DeployOk$_store_cell INLINECALLDICT
+        s4 s3 s0 XCHG3
+        s1 s2 XCHG
+        $LadaEscrow$_fun_notify INLINECALLDICT
+        $LadaEscrow$_contract_store INLINECALLDICT
+        RETALT
+      }>
+      s0 s3 XCHG
+    }>
+    s0 s3 XCHG
+    HASHSU
+    31654583680611409514057216691426809995607916659286257624705531226299193286395 PUSHINT
+    EQUAL
+    IFJMP:<{
+      35499 PUSHINT
+      __tact_context_get_sender INLINECALLDICT
+      s3 PUSH
+      SDEQ
+      THROWANYIFNOT
+      0 PUSHINT
+      130 PUSHINT
+          <b b> PUSHREF // Pure Fift: "<b" creates a builder, "b>" turns it into a cell at compile time
+      s4 PUSH
+      3 -ROLL
+      $SendParameters$_constructor_to_value_mode_body INLINECALLDICT
+          NEWC
+          b{01} STSLICECONST  // store tag = $0 and ihr_disabled = true
+          1 STI               // store `bounce`
+          b{000} STSLICECONST // store bounced = false and src = addr_none
+          STSLICE             // store `to`
+          SWAP
+          STGRAMS             // store `value`
+          105 PUSHINT         // 1 + 4 + 4 + 64 + 32
+          STZEROES            // store currency_collection, ihr_fee, fwd_fee, created_lt and created_at
+          // → Stack state
+          // s0: Builder
+          // s1: `data`
+          // s2: `code`
+          // s3: `body`
+          // s4: `mode`
+          // Group 2: Placing the Builder after code and data, then checking those for nullability
+          s2 XCHG0
+          DUP2
+          ISNULL
+          SWAP
+          ISNULL
+          AND
+          // → Stack state
+          // s0: -1 (true) if `data` and `code` are both null, 0 (false) otherwise
+          // s1: `code`
+          // s2: `data`
+          // s3: Builder
+          // s4: `body`
+          // s5: `mode`
+          // Group 3: Left branch of the IFELSE, executed if s0 is -1 (true)
+          <{
+              DROP2 // drop `data` and `code`, since either of those is null
+              b{0} STSLICECONST
+          }> PUSHCONT
+          // Group 3: Right branch of the IFELSE, executed if s0 is 0 (false)
+          <{
+              // _ split_depth:(Maybe (## 5))
+              //   special:(Maybe TickTock)
+              //   code:(Maybe ^Cell)
+              //   data:(Maybe ^Cell)
+              //   library:(Maybe ^Cell)
+              // = StateInit;
+              ROT                // place message Builder on top
+              b{10} STSLICECONST // store Maybe = true, Either = false
+              // Start composing inlined StateInit
+              b{00} STSLICECONST // store split_depth and special first
+              STDICT             // store code
+              STDICT             // store data
+              b{0} STSLICECONST  // store library
+          }> PUSHCONT
+          // Group 3: IFELSE that does the branching shown above
+          IFELSE
+          // → Stack state
+          // s0: Builder
+          // s1: null or StateInit
+          // s2: `body`
+          // s3: `mode`
+          // Group 4: Finalizing the message
+          STDICT // store `body` as ref with an extra Maybe bit, since `body` might be null
+          ENDC
+          // → Stack state
+          // s0: Cell
+          // s1: `mode`
+          // Group 5: Sending the message, with `mode` on top
+          SWAP
+          SENDRAWMSG // https://github.com/tact-lang/tact/issues/1558
+      s0 s0 s3 XCHG3
+      $LadaEscrow$_contract_store INLINECALLDICT
+    }>
+    4 BLKDROP
+    130 THROW
+  }>
+  __tact_selector_hack PROC:<{
+    @atend @ 1 {
+            execute current@ context@ current!
+            {
+                // The core idea of this function is to save gas by avoiding unnecessary dict jump, when recv_internal/recv_external is called
+                // We want to extract recv_internal/recv_external from the dict and select needed function
+                // not by jumping to the needed function by it's index, but by using usual IF statements.
+                }END> b> // Close previous builder, now we have a cell of previous code on top of the stack
+                <{ // Start of the new code builder
+                    SETCP0
+                    // Swap the new code builder with the previous code, now we have previous code on top of the stack
+                    swap
+                    // Transform cell to slice and load first ref from the previous code, now we have the dict on top of the stack
+                    <s ref@
+                    // Extract the recv_internal from the dict
+                    dup 0 swap @procdictkeylen idict@ { "internal shortcut error" abort } ifnot
+                    swap
+                    // Delete the recv_internal from the dict
+                    0 swap @procdictkeylen idict- drop
+                    // Delete the recv_external from the dict (it's okay if it's not there)
+                    -1 swap @procdictkeylen idict- drop
+                    // Delete the __tact_selector_hack from the dict
+                    65535 swap @procdictkeylen idict- drop
+                    // Bring the code builder from the bottom of the stack
+                    // because if recv_external extraction is optional, and the number of elements on the stack is not fixed
+                    depth 1- roll
+                    // Swap with the dict from which we extracted recv_internal and (maybe) recv_external
+                    swap
+                    // Check if the dict is empty
+                    dup null?
+                    // Store a copy of this flag in the bottom of the stack
+                    dup depth 1- -roll
+                    {
+                        // If the dict is empty, just drop it (it will be null if it's empty)
+                        drop
+                    }
+                    {
+                        // If the dict is not empty, prepare continuation to be stored in c3
+                        <{
+                            // Save this dict as first ref in this continuation, it will be pushed in runtime by DICTPUSHCONST
+                            swap @procdictkeylen DICTPUSHCONST
+                            // Jump to the needed function by it's index
+                            DICTIGETJMPZ
+                            // If such key is not found, throw 11 along with the key as an argument
+                            11 THROWARG
+                        }> PUSHCONT
+                        // Store the continuation in c3
+                        c3 POP
+                    } cond
+                    // Function id is on top of the (runtime) stack
+                    DUP IFNOTJMP:<{
+                        // place recv_internal here
+                        DROP swap @addop
+                    }>
+                    // Bring back the flag, indicating if the dict is empty or not from the bottom of the stack
+                    depth 1- roll
+                    {
+                        // If the dict is empty, throw 11
+                        11 THROWARG
+                    }
+                    {
+                        // If the dict is not empty, jump to continuation from c3
+                        c3 PUSH JMPX
+                    } cond
+                }> b>
+            } : }END>c
+            current@ context! current!
+        } does @atend !
+  }>
+}END>c

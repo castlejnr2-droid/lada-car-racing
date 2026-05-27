@@ -38,7 +38,7 @@ export default function Race() {
           const r = await fetchRace(raceId);
           if (cancelled) return;
           setRace(r);
-          if (r.state === 'settled' || r.state === 'refunded') return;
+          if (r.state === 'settled' || r.state === 'active' || r.state === 'refunded') return;
         } catch (e) {
           console.warn('[race] poll error', e);
         }
@@ -51,7 +51,7 @@ export default function Race() {
 
   // Start replay once settled and canvas is ready
   useEffect(() => {
-    if (race?.state !== 'settled') return;
+    if (race?.state !== 'settled' && race?.state !== 'active') return;
     if (!race.combined_seed || !canvasEl) return;
     const shortAddr = (a) => a ? `${a.slice(0, 4)}…${a.slice(-4)}` : '???';
     replayStopRef.current = runReplay(canvasEl, race.combined_seed, {
@@ -150,7 +150,7 @@ export default function Race() {
     <div className="race">
       <div className="race__canvas-wrap">
         <canvas ref={canvasRef} className="race__canvas" width="100" height="100" />
-        {race.state !== 'settled' && (
+        {race.state !== 'settled' && race.state !== 'active' && (
           <PhaseOverlay race={race} address={address} onCancel={handleCancel} cancelBusy={busy} />
         )}
         <button

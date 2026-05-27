@@ -133,9 +133,11 @@ export async function handleDeposit(e) {
     const loser  = winner === race.player1 ? race.player2 : race.player1;
     console.log(`[events.Deposit] winner=${winner} seed=${seedHex}`);
 
-    // Store winner + seed in DB now (so admin can see them even if on-chain payout fails)
+    // Advance to 'active' and store winner + seed so both players' screens
+    // can transition to race gameplay immediately, without waiting for the
+    // on-chain WinnerDeclared confirmation.
     await query(
-      `UPDATE races SET combined_seed=$2, winner=$3, loser=$4 WHERE id=$1`,
+      `UPDATE races SET state='active', combined_seed=$2, winner=$3, loser=$4 WHERE id=$1`,
       [race.id, seedHex, winner, loser],
     );
 
