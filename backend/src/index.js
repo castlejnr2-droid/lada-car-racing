@@ -83,31 +83,6 @@ async function boot() {
     process.exit(1);
   }
 
-  // Cancel pending/open lobbies that are older than 15 minutes (stuck from crashed sessions).
-  // We skip recently-created lobbies so that a host's deposit can land on-chain
-  // even if a Railway redeploy happens between lobby creation and deposit confirmation.
-  try {
-    const stuck = await pool.query(`
-      UPDATE lobbies
-         SET status = 'cancelled', closed_at = COALESCE(closed_at, now())
-       WHERE status IN ('pending', 'open')
-         AND created_at < now() - interval '15 minutes'
-      RETURNING id
-    `);
-    const stuckIds = stuck.rows.map(r => r.id);
-    if (stuckIds.length > 0) {
-      await pool.query(`
-        UPDATE races SET state = 'refunded', finished_at = COALESCE(finished_at, now())
-         WHERE lobby_id = ANY($1::uuid[]) AND state = 'awaiting_deposits'
-      `, [stuckIds]);
-      console.log(`[boot] cancelled ${stuckIds.length} stuck pending/open lobbies (>15 min old)`);
-    } else {
-      console.log('[boot] no stuck lobbies to cancel');
-    }
-  } catch (e) {
-    console.warn('[boot] stuck-lobby cleanup failed (non-fatal):', e?.message || e);
-  }
-
   app.listen(PORT, HOST, () => {
     console.log(`[lada-backend] listening on ${HOST}:${PORT}  (env PORT=${process.env.PORT || 'unset'})`);
     // Indexer runs in-process for the MVP. Fire-and-forget; it polls TonAPI.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTonAddress } from '@tonconnect/ui-react';
 import { fetchRace } from '../api/races.js';
+import { cancelLobby } from '../api/lobbies.js';
 import { useTonSender } from '../blockchain/tonConnect.js';
 import { buildDeposit } from '../blockchain/jetton.js';
 import { runReplay } from '../game/replay.js';
@@ -87,6 +88,20 @@ export default function Race() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [race, address, busy, replayDone]);
 
+  async function handleCancel() {
+    if (!race?.lobby_id) return;
+    setBusy(true);
+    try {
+      await cancelLobby(race.lobby_id, address);
+      navigate('/');
+    } catch (e) {
+      haptic.error();
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDeposit() {
     if (!race?.on_chain_id) {
       alert('Race not yet registered on-chain. Try again in a few seconds.');
@@ -136,7 +151,7 @@ export default function Race() {
       <div className="race__canvas-wrap">
         <canvas ref={canvasRef} className="race__canvas" width="100" height="100" />
         {race.state !== 'settled' && (
-          <PhaseOverlay race={race} address={address} />
+          <PhaseOverlay race={race} address={address} onCancel={handleCancel} cancelBusy={busy} />
         )}
         <button
           className="btn btn--ghost btn--small"
@@ -150,9 +165,10 @@ export default function Race() {
   );
 }
 
-function PhaseOverlay({ race, address }) {
+function PhaseOverlay({ race, address, onCancel, cancelBusy }) {
   // Waiting for an opponent to join (host deposit not yet confirmed, or no player2 yet)
   if (race.waiting_for_player2) {
+    const isCreator = race.player1 === address;
     return (
       <div className="race__overlay">
         <div className="race__phase-title">Waiting for opponent</div>
@@ -163,6 +179,16 @@ function PhaseOverlay({ race, address }) {
         <p style={{ color: 'var(--fg-muted)', fontSize: 12 }}>
           Stake {formatLada(race.stake)} LADA per player
         </p>
+        {isCreator && (
+          <button
+            className="btn btn--danger btn--small"
+            onClick={onCancel}
+            disabled={cancelBusy}
+            style={{ marginTop: 16 }}
+          >
+            {cancelBusy ? 'Cancelling…' : 'Cancel & Refund'}
+          </button>
+        )}
       </div>
     );
   }

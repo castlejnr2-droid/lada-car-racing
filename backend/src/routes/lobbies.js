@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db/pool.js';
-import { createRaceOnChain } from '../services/housePayout.js';
-import { setPlayer2OnChain } from '../services/housePayout.js';
+import { createRaceOnChain, setPlayer2OnChain, refundRace } from '../services/housePayout.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -198,6 +197,7 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
     const { address } = req.body || {};
+
     const result = await query(
       `UPDATE lobbies
           SET status = 'cancelled', closed_at = now()
@@ -208,6 +208,21 @@ router.delete('/:id', async (req, res, next) => {
     if (result.rowCount === 0) {
       return res.status(409).json({ error: 'cannot cancel (not creator, already matched, or not found)' });
     }
+
+    // Mark the associated race as refunded in DB and trigger on-chain refund
+    const raceResult = await query(
+      `UPDATE races SET state = 'refunded', finished_at = now()
+        WHERE lobby_id = $1 AND state = 'awaiting_deposits'
+        RETURNING on_chain_id`,
+      [id],
+    );
+    if (raceResult.rowCount > 0) {
+      const onChainId = raceResult.rows[0].on_chain_id;
+      refundRace({ raceId: onChainId }).catch((err) => {
+        console.error(`[lobbies] refundRace FAILED for lobby=${id}:`, err.message);
+      });
+    }
+
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
