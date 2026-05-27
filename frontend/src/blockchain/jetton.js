@@ -237,7 +237,8 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
     .storeAddress(Address.parse(owner))           // response_destination
     .storeBit(0)                                  // custom_payload = null
     .storeCoins(toNano('0.05'))                   // forward_ton_amount
-    .storeRef(forwardPayload)                     // forward_payload as reference cell
+    .storeBit(1)                                  // Either: reference cell follows
+    .storeRef(forwardPayload)                     // forward_payload (raceId as uint64)
     .endCell();
 
   const bocBase64 = body.toBoc().toString('base64');

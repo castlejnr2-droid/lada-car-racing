@@ -36,10 +36,6 @@ router.get('/', async (_req, res, next) => {
 
 // ───── POST /api/lobbies ─ create a lobby ────────────────────────────────
 //
-// FIX 2: Lobby starts as status='pending' (hidden from open list).
-// The on-chain race is created immediately with player2=house_wallet placeholder.
-// Once the indexer confirms host's deposit, lobby transitions to 'open'.
-//
 //   Body: { stake, creator, username?, minPlayers?, maxPlayers? }
 router.post('/', async (req, res, next) => {
   try {
@@ -58,10 +54,9 @@ router.post('/', async (req, res, next) => {
       [creator, username || null],
     );
 
-    // Create lobby in 'pending' state — hidden from open list until host deposits
     const { rows } = await query(
       `INSERT INTO lobbies (stake, creator, min_players, max_players, status)
-       VALUES ($1, $2, $3, $4, 'pending')
+       VALUES ($1, $2, $3, $4, 'open')
        RETURNING id, stake::text, creator, min_players AS "minPlayers",
                  max_players AS "maxPlayers", status, created_at`,
       [stake, creator, minPlayers, maxPlayers],
@@ -115,15 +110,12 @@ router.post('/', async (req, res, next) => {
     );
     const race = raceInsert.rows[0];
 
-    console.log(`[lobbies] created lobby=${lobby.id} status=pending race.on_chain_id=${onChainId}`);
+    console.log(`[lobbies] created lobby=${lobby.id} status=open race.on_chain_id=${onChainId}`);
     res.status(201).json({ ...lobby, race });
   } catch (e) { next(e); }
 });
 
 // ───── POST /api/lobbies/:id/join ────────────────────────────────────────
-//
-// FIX 2: Lobby must be 'open' (host deposit confirmed).
-// Sets player2 on-chain so the contract accepts player2's deposit.
 router.post('/:id/join', async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -209,18 +201,23 @@ router.delete('/:id', async (req, res, next) => {
       return res.status(409).json({ error: 'cannot cancel (not creator, already matched, or not found)' });
     }
 
-    // Mark the associated race as refunded in DB and trigger on-chain refund
+    // Mark the associated race as refunded in DB
     const raceResult = await query(
       `UPDATE races SET state = 'refunded', finished_at = now()
         WHERE lobby_id = $1 AND state = 'awaiting_deposits'
-        RETURNING on_chain_id`,
+        RETURNING on_chain_id, player1_deposited`,
       [id],
     );
+    // Only trigger on-chain refund if the host actually deposited — otherwise
+    // there is no LADA in the escrow to return, and calling Refund would just
+    // send 0.2 TON to the contract with nothing coming back.
     if (raceResult.rowCount > 0) {
-      const onChainId = raceResult.rows[0].on_chain_id;
-      refundRace({ raceId: onChainId }).catch((err) => {
-        console.error(`[lobbies] refundRace FAILED for lobby=${id}:`, err.message);
-      });
+      const { on_chain_id: onChainId, player1_deposited } = raceResult.rows[0];
+      if (player1_deposited && onChainId) {
+        refundRace({ raceId: onChainId }).catch((err) => {
+          console.error(`[lobbies] refundRace FAILED for lobby=${id}:`, err.message);
+        });
+      }
     }
 
     res.json({ ok: true });

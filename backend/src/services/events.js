@@ -119,28 +119,7 @@ export async function handleDeposit(e) {
     [race.id, newP1dep, newP2dep],
   );
 
-  // ── 5. Open the lobby when host (player1) deposits ────────────────
-  // Lobby starts as 'pending' (hidden). Opening it makes it visible so
-  // player2 can join. The UPDATE is idempotent via `AND status='pending'`.
-  // We do NOT gate on `!race.player1_deposited` to survive partial failures.
-  if (isP1 && race.lobby_id) {
-    console.log(`[events.Deposit] host deposit — checking lobby ${race.lobby_id} status…`);
-    const lobbyBefore = await query(`SELECT status FROM lobbies WHERE id=$1`, [race.lobby_id]);
-    const lobbyStatus = lobbyBefore.rows[0]?.status ?? 'NOT_FOUND';
-    console.log(`[events.Deposit] lobby current status=${lobbyStatus}`);
-
-    const upd = await query(
-      `UPDATE lobbies SET status='open' WHERE id=$1 AND status='pending' RETURNING id`,
-      [race.lobby_id],
-    );
-    if (upd.rowCount > 0) {
-      console.log(`[events.Deposit] ✓ lobby=${race.lobby_id} opened — now visible to other players`);
-    } else {
-      console.warn(`[events.Deposit] lobby=${race.lobby_id} NOT updated (status='${lobbyStatus}', expected 'pending')`);
-    }
-  }
-
-  // ── 6. Both deposited → determine winner and trigger payout ───────
+  // ── 5. Both deposited → determine winner and trigger payout ───────
   if (newP1dep && newP2dep && race.state === 'awaiting_deposits') {
     console.log(`[events.Deposit] BOTH deposited — generating winner and triggering payout`);
 
