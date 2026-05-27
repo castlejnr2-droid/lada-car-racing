@@ -212,14 +212,14 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   const userJettonWallet = await getUserJettonWallet(owner);
   if (!userJettonWallet) throw new Error('You have no Lada jetton wallet yet — buy some LADA first.');
 
-  // TEP-74 forward_payload uses Either Cell ^Cell encoding:
-  //   bit 0 → payload follows inline (remaining bits of this cell)
-  //   bit 1 → payload is in the next reference cell
-  // Without the Either bit, the jetton wallet interprets the first bit of
-  // raceId as the discriminant — stripping 1 bit and delivering only 63 bits
-  // to the escrow, which then sees payload.bits() < 64 and refunds.
-  // Fix: storeBit(0) = inline, then the full 64-bit raceId.
   const raceIdBigInt = BigInt(raceIdOnChain);   // on_chain_id is a string from the API
+
+  // forward_payload: pure 64-bit raceId in a reference cell.
+  // The Either discriminant bit is handled by the transfer message structure;
+  // it must NOT appear inside the payload content.
+  const forwardPayload = beginCell()
+    .storeUint(raceIdBigInt, 64)
+    .endCell();
 
   console.log('[jetton] buildDeposit ─────────────────────────────');
   console.log('[jetton]   owner          :', owner);
@@ -227,7 +227,7 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   console.log('[jetton]   raceIdOnChain  :', raceIdOnChain, '→ BigInt:', raceIdBigInt.toString());
   console.log('[jetton]   ESCROW_ADDRESS :', ESCROW_ADDRESS);
   console.log('[jetton]   userJettonWallet:', userJettonWallet);
-  console.log('[jetton]   forward_payload : storeBit(0) + storeUint(raceId, 64)');
+  console.log('[jetton]   forward_payload : storeUint(raceId, 64) in ref cell');
 
   const body = beginCell()
     .storeUint(JETTON_TRANSFER_OP, 32)            // 0x0f8a7ea5
@@ -237,11 +237,7 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
     .storeAddress(Address.parse(owner))           // response_destination
     .storeBit(0)                                  // custom_payload = null
     .storeCoins(toNano('0.05'))                   // forward_ton_amount
-    // forward_payload — Either Cell ^Cell (TEP-74):
-    //   bit 0 = inline variant; the next 64 bits are the payload (raceId).
-    //   The escrow's TokenNotification handler reads forwardPayload.loadUint(64).
-    .storeBit(0)                                  // Either discriminant: inline
-    .storeUint(raceIdBigInt, 64)                  // raceId (uint64)
+    .storeRef(forwardPayload)                     // forward_payload as reference cell
     .endCell();
 
   const bocBase64 = body.toBoc().toString('base64');
