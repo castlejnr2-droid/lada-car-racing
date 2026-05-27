@@ -4,14 +4,14 @@
  * Contract lifecycle (owner-payout model):
  *   1. CreateRace  (owner) — register race before deposits
  *   2. TokenNotification — players deposit Lada; contract tracks them
- *   3. Payout      (owner) — send 95% to winner, 5% stays in contract
+ *   3. Payout      (bypass) — WithdrawJettons to house wallet, then direct
+ *                             jetton transfer to winner (escrow Payout op bypassed)
  *   4. Refund      (owner) — return stakes if race cancelled
  *
  * Op codes (contracts/contracts/lada_escrow.tact):
  *   CreateRace       0x6c726300  — owner only
- *   Payout           0x6c726304  — owner only, triggers winner payout
  *   Refund           0x6c726305  — owner only, returns deposits
- *   WithdrawJettons  0x6c726306  — owner only, sweeps house fees
+ *   WithdrawJettons  0x6c726306  — owner only, sweeps LADA out of contract
  *   SetJettonWallet  0x6c726307  — owner only, one-time post-deploy setup
  *
  * Required env vars:
@@ -25,10 +25,10 @@ import { mnemonicToPrivateKey } from '@ton/crypto';
 import { config } from '../config.js';
 
 const OP_CREATE_RACE      = 0x6c726300;
-const OP_PAYOUT           = 0x6c726304;
 const OP_REFUND           = 0x6c726305;
 const OP_WITHDRAW_JETTONS = 0x6c726306;
 const OP_SET_PLAYER2      = 0x6c726308;
+const JETTON_TRANSFER_OP  = 0x0f8a7ea5;
 
 let _client  = null;
 let _wallet  = null;
@@ -109,6 +109,77 @@ async function sendToEscrow({ body, value, label }) {
   console.log(`[housePayout] ${label} sent OK | seqno=${seqno}`);
 }
 
+/**
+ * Resolve the house wallet's own LADA jetton wallet address via get_wallet_address.
+ */
+async function getHouseJettonWallet() {
+  const ladaMaster      = config.ton.ladaJettonMaster;
+  const houseWalletAddr = config.ton.houseWallet;
+  if (!ladaMaster)      throw new Error('[housePayout] LADA_JETTON_MASTER not configured');
+  if (!houseWalletAddr) throw new Error('[housePayout] HOUSE_WALLET_ADDRESS not configured');
+
+  const client = getClient();
+  const result = await client.runMethod(
+    Address.parse(ladaMaster),
+    'get_wallet_address',
+    [{ type: 'slice', cell: beginCell().storeAddress(Address.parse(houseWalletAddr)).endCell() }],
+  );
+  const addr = result.stack.readAddress();
+  console.log('[housePayout] house LADA jetton wallet:', addr.toString({ urlSafe: true, bounceable: false }));
+  return addr;
+}
+
+/**
+ * Send LADA jettons directly from the house wallet to `to`.
+ * Signs a standard TEP-74 transfer from the house wallet to its own LADA
+ * jetton wallet, which then forwards the tokens on-chain.
+ */
+async function sendJettonFromHouseWallet({ to, amount, label }) {
+  const houseWalletAddr   = config.ton.houseWallet;
+  const houseJettonWallet = await getHouseJettonWallet();
+
+  const body = beginCell()
+    .storeUint(JETTON_TRANSFER_OP, 32)
+    .storeUint(0n, 64)                                   // queryId
+    .storeCoins(amount)                                  // amount to transfer
+    .storeAddress(Address.parse(to))                     // destination (winner)
+    .storeAddress(Address.parse(houseWalletAddr))        // responseDestination
+    .storeBit(0)                                         // no customPayload
+    .storeCoins(toNano('0.01'))                          // forwardTonAmount
+    .storeBit(0)                                         // forwardPayload: inline, empty
+    .endCell();
+
+  const { wallet, keyPair } = await getHouseWallet();
+  const client   = getClient();
+  const contract = client.open(wallet);
+
+  let seqno;
+  try {
+    seqno = await contract.getSeqno();
+  } catch (e) {
+    throw new Error(`[housePayout] failed to get seqno for ${label}: ${e.message}`);
+  }
+  console.log(`[housePayout] ${label} | seqno=${seqno} | to=${to} | amount=${amount}`);
+
+  try {
+    await contract.sendTransfer({
+      seqno,
+      secretKey: keyPair.secretKey,
+      messages: [
+        internal({
+          to:     houseJettonWallet,
+          value:  toNano('0.1'),
+          bounce: true,
+          body,
+        }),
+      ],
+    });
+  } catch (e) {
+    throw new Error(`[housePayout] ${label} sendTransfer failed: ${e.message}`);
+  }
+  console.log(`[housePayout] ${label} sent OK | seqno=${seqno}`);
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -144,39 +215,57 @@ export async function createRaceOnChain({ raceId, stake, player1, player2 }) {
 }
 
 /**
- * Pay out the winner of a race (Payout op, owner-only).
+ * Pay out the winner of a race — bypass approach.
  *
- * The contract sends 95% of the pot to `winner`. The 5% house fee stays
- * in the contract and can be swept later with withdrawHouseFees().
+ * The escrow's internal Payout op is unreliable, so we route through the
+ * house wallet as intermediary instead:
  *
- * @param {string}  raceId  on-chain race ID (uint64 as string)
- * @param {string}  winner  TON address of the winning player
- * @param {bigint}  seed    256-bit seed echoed in WinnerDeclared event
+ *   1. WithdrawJettons — sweep the full pot (stake × 2) from the escrow
+ *      contract to the house wallet.
+ *   2. Wait ~20 s for the on-chain jetton transfer to confirm.
+ *   3. Send 95 % of the pot directly from the house wallet to the winner
+ *      via a standard TEP-74 jetton transfer.  The 5 % fee stays in the
+ *      house wallet.
+ *
+ * @param {string} raceId  on-chain race ID (uint64 as string)
+ * @param {string} winner  TON address of the winning player
+ * @param {string} stake   nano-LADA stake per player (string)
  */
-export async function payoutRace({ raceId, winner, seed }) {
-  let winnerAddr;
-  try { winnerAddr = Address.parse(winner); } catch (e) {
-    throw new Error(`[housePayout] invalid winner address "${winner}": ${e.message}`);
-  }
-
+export async function payoutRace({ raceId, winner, stake }) {
   const raceIdBigInt = BigInt(raceId);
-  const seedBigInt   = BigInt(seed);
+  const potBigInt    = BigInt(stake) * 2n;
+  const winnerAmount = potBigInt - (potBigInt * 500n / 10000n);  // 95 %
 
-  console.log('[housePayout] payoutRace:', {
+  const houseWalletAddr = config.ton.houseWallet;
+  if (!houseWalletAddr) throw new Error('[housePayout] HOUSE_WALLET_ADDRESS not configured');
+
+  console.log('[housePayout] payoutRace (bypass):', {
     raceId: raceIdBigInt.toString(), winner,
+    pot: potBigInt.toString(), winnerAmount: winnerAmount.toString(),
     network: config.ton.network,
   });
 
-  // Payout body: op(32) raceId(64) winner(addr) seed(uint256)
-  const body = beginCell()
-    .storeUint(OP_PAYOUT, 32)
-    .storeUint(raceIdBigInt, 64)
-    .storeAddress(winnerAddr)
-    .storeUint(seedBigInt, 256)
-    .endCell();
+  // ── 1. Sweep pot from escrow → house wallet ───────────────────────
+  await sendToEscrow({
+    body: beginCell()
+      .storeUint(OP_WITHDRAW_JETTONS, 32)
+      .storeCoins(potBigInt)
+      .storeAddress(Address.parse(houseWalletAddr))
+      .endCell(),
+    value: '0.1',
+    label: `WithdrawJettons(race=${raceIdBigInt}, pot=${potBigInt})`,
+  });
 
-  // 0.1 TON: the contract sends one jetton transfer (0.05 gas + 0.01 notify)
-  await sendToEscrow({ body, value: '0.1', label: `Payout(${raceIdBigInt}, winner=${winner})` });
+  // ── 2. Wait for escrow → house jetton transfer to confirm ─────────
+  console.log('[housePayout] payoutRace — waiting 20 s for WithdrawJettons to confirm…');
+  await new Promise(resolve => setTimeout(resolve, 20_000));
+
+  // ── 3. Forward 95 % to winner from house wallet ───────────────────
+  await sendJettonFromHouseWallet({
+    to:     winner,
+    amount: winnerAmount,
+    label:  `JettonToWinner(race=${raceIdBigInt}, winner=${winner})`,
+  });
 }
 
 /**

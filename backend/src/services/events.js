@@ -49,7 +49,7 @@ async function recordTx({ txHash, lt, type, raceId, player, amount, raw }) {
 async function raceRowFor(onChainId) {
   const { rows } = await query(
     `SELECT id, lobby_id, on_chain_id::text, state, player1, player2,
-            player1_deposited, player2_deposited
+            player1_deposited, player2_deposited, stake::text
        FROM races
       WHERE on_chain_id = $1`,
     [onChainId],
@@ -141,17 +141,31 @@ export async function handleDeposit(e) {
       [race.id, seedHex, winner, loser],
     );
 
-    // Fire payout on-chain — fire-and-forget.
-    // WinnerDeclared event will set state=settled once the tx lands.
+    // Bypass payout: WithdrawJettons from escrow → wait → send LADA direct to winner.
+    // After completion, mark race settled with payout amounts.
+    const potBigInt    = BigInt(race.stake) * 2n;
+    const winnerPayout = potBigInt - (potBigInt * 500n / 10000n);  // 95 %
+    const houseFee     = potBigInt - winnerPayout;                  // 5 %
+
     payoutRace({
       raceId: race.on_chain_id,
       winner,
-      seed: seedBigInt,
-    }).then(() => {
-      console.log(`[events.Deposit] payoutRace sent OK for race=${race.id}`);
+      stake: race.stake,
+    }).then(async () => {
+      console.log(`[events.Deposit] payoutRace completed for race=${race.id}`);
+      await query(
+        `UPDATE races
+            SET state='settled',
+                winner_payout = $2,
+                house_fee     = $3,
+                finished_at   = COALESCE(finished_at, now())
+          WHERE id = $1`,
+        [race.id, winnerPayout.toString(), houseFee.toString()],
+      );
+      console.log(`[events.Deposit] race=${race.id} marked settled`);
     }).catch((err) => {
       console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
-      console.error(`[events.Deposit] admin can retry payout manually for on_chain_id=${race.on_chain_id}`);
+      console.error(`[events.Deposit] admin can retry: on_chain_id=${race.on_chain_id} winner=${winner} stake=${race.stake}`);
     });
   } else if (newP1dep || newP2dep) {
     console.log(`[events.Deposit] one deposit in, waiting for other (p1=${newP1dep} p2=${newP2dep})`);
