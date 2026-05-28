@@ -215,17 +215,13 @@ export async function createRaceOnChain({ raceId, stake, player1, player2 }) {
 }
 
 /**
- * Pay out the winner of a race — bypass approach.
+ * Pay out the winner of a race — direct house-wallet approach.
  *
- * The escrow's internal Payout op is unreliable, so we route through the
- * house wallet as intermediary instead:
- *
- *   1. WithdrawJettons — sweep the full pot (stake × 2) from the escrow
- *      contract to the house wallet.
- *   2. Wait ~20 s for the on-chain jetton transfer to confirm.
- *   3. Send 95 % of the pot directly from the house wallet to the winner
- *      via a standard TEP-74 jetton transfer.  The 5 % fee stays in the
- *      house wallet.
+ * LADA accumulates in the escrow contract and will be swept manually
+ * by the house periodically (using withdrawHouseFees). The house wallet
+ * pays 95 % of the pot to the winner directly from its own LADA balance,
+ * skipping the escrow Payout / WithdrawJettons ops entirely (those kept
+ * failing on-chain).
  *
  * @param {string} raceId  on-chain race ID (uint64 as string)
  * @param {string} winner  TON address of the winning player
@@ -236,31 +232,14 @@ export async function payoutRace({ raceId, winner, stake }) {
   const potBigInt    = BigInt(stake) * 2n;
   const winnerAmount = potBigInt - (potBigInt * 500n / 10000n);  // 95 %
 
-  const houseWalletAddr = config.ton.houseWallet;
-  if (!houseWalletAddr) throw new Error('[housePayout] HOUSE_WALLET_ADDRESS not configured');
-
-  console.log('[housePayout] payoutRace (bypass):', {
+  console.log('[housePayout] payoutRace (direct from house wallet):', {
     raceId: raceIdBigInt.toString(), winner,
     pot: potBigInt.toString(), winnerAmount: winnerAmount.toString(),
     network: config.ton.network,
   });
 
-  // ── 1. Sweep pot from escrow → house wallet ───────────────────────
-  await sendToEscrow({
-    body: beginCell()
-      .storeUint(OP_WITHDRAW_JETTONS, 32)
-      .storeCoins(potBigInt)
-      .storeAddress(Address.parse(houseWalletAddr))
-      .endCell(),
-    value: '0.1',
-    label: `WithdrawJettons(race=${raceIdBigInt}, pot=${potBigInt})`,
-  });
-
-  // ── 2. Wait for escrow → house jetton transfer to confirm ─────────
-  console.log('[housePayout] payoutRace — waiting 20 s for WithdrawJettons to confirm…');
-  await new Promise(resolve => setTimeout(resolve, 20_000));
-
-  // ── 3. Forward 95 % to winner from house wallet ───────────────────
+  // Send 95 % of pot directly from house wallet LADA balance to winner.
+  // Escrow LADA accumulates and is swept manually via withdrawHouseFees().
   await sendJettonFromHouseWallet({
     to:     winner,
     amount: winnerAmount,

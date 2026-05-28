@@ -16,6 +16,72 @@ import { Address } from '@ton/core';
 import { query } from '../db/pool.js';
 import { payoutRace } from './housePayout.js';
 
+// ── Server-side race physics (mirrors frontend game/rng.js + game/physics.js) ──
+// MUST stay in sync with the frontend implementations so the animation winner
+// matches the declared winner exactly.
+
+function _seedFromHex(hex) {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  let acc = 0;
+  for (let i = 0; i < clean.length; i += 8) {
+    acc ^= parseInt(clean.slice(i, i + 8).padEnd(8, '0'), 16) >>> 0;
+  }
+  return acc >>> 0;
+}
+
+function _createRng(seed) {
+  let a = seed >>> 0;
+  return function rng() {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const _TRACK_LENGTH      = 1200;
+const _POTHOLES_PER_LANE = 14;
+const _BASE_SPEED        = 6;
+const _POTHOLE_PENALTY   = 0.35;
+const _POTHOLE_HIT_RAD   = 5;
+const _MAX_TICKS         = 600;
+
+/**
+ * Run the same deterministic physics simulation as the frontend and return
+ * the winning car index (0 = player1, 1 = player2).
+ */
+function computeWinnerIndex(seedHex) {
+  const rng = _createRng(_seedFromHex(seedHex));
+
+  // buildTrack (2 lanes)
+  const lanes = [];
+  for (let l = 0; l < 2; l++) {
+    const potholes = [];
+    for (let i = 0; i < _POTHOLES_PER_LANE; i++) {
+      potholes.push(80 + Math.floor(rng() * (_TRACK_LENGTH - 80)));
+    }
+    lanes.push({ potholes: potholes.sort((a, b) => a - b) });
+  }
+
+  // simulate
+  const positions = [0, 0];
+  let tick = 0;
+  while (positions.some((p) => p < _TRACK_LENGTH) && tick < _MAX_TICKS) {
+    for (let i = 0; i < 2; i++) {
+      if (positions[i] >= _TRACK_LENGTH) continue;
+      const onPothole = lanes[i].potholes.some(
+        (p) => Math.abs(p - positions[i]) < _POTHOLE_HIT_RAD,
+      );
+      const jitter = 0.85 + rng() * 0.3;
+      positions[i] += _BASE_SPEED * (onPothole ? _POTHOLE_PENALTY : 1) * jitter;
+    }
+    tick++;
+  }
+
+  return positions[1] > positions[0] ? 1 : 0;
+}
+
 /**
  * Normalize any TON address format to raw "0:hex" for comparison.
  * Returns null if the input is falsy or unparseable.
@@ -124,14 +190,16 @@ export async function handleDeposit(e) {
     console.log(`[events.Deposit] BOTH deposited — generating winner and triggering payout`);
 
     // Generate a cryptographically random 256-bit seed server-side
-    const seedBytes  = randomBytes(32);
-    const seedHex    = '0x' + seedBytes.toString('hex');
-    const seedBigInt = BigInt(seedHex);
+    const seedBytes = randomBytes(32);
+    const seedHex   = '0x' + seedBytes.toString('hex');
 
-    // Determine winner: if seed is even → player1 wins; odd → player2 wins
-    const winner = seedBigInt % 2n === 0n ? race.player1 : race.player2;
-    const loser  = winner === race.player1 ? race.player2 : race.player1;
-    console.log(`[events.Deposit] winner=${winner} seed=${seedHex}`);
+    // Determine winner using the same deterministic physics simulation as the
+    // frontend animation — winnerIdx 0 = player1, 1 = player2.
+    const winnerIdx = computeWinnerIndex(seedHex);
+    const winner    = winnerIdx === 0 ? race.player1 : race.player2;
+    const loser     = winnerIdx === 0 ? race.player2 : race.player1;
+    console.log(`[events.Deposit] seed=${seedHex}`);
+    console.log(`[events.Deposit] winnerIdx=${winnerIdx} winner=${winner}`);
 
     // Advance to 'active' and store winner + seed so both players' screens
     // can transition to race gameplay immediately, without waiting for the
