@@ -10,7 +10,8 @@
     "start": "node src/db/migrate.js && node src/index.js",
     "migrate": "node src/db/migrate.js",
     "test": "node --test",
-    "release": "node src/db/migrate.js"
+    "release": "node src/db/migrate.js",
+    "fix:escrow-jetton-wallet": "node src/scripts/fixEscrowJettonWallet.js"
   },
   "dependencies": {
     "@ton/core": "0.62.0",

@@ -318,6 +318,25 @@ export async function setPlayer2OnChain({ raceId, player2 }) {
 }
 
 /**
+ * One-time fix: update the escrow's stored ladaJettonWallet to the correct
+ * address derived from the LADA master for the escrow contract address.
+ * Safe to call again — it's idempotent (owner-only SetJettonWallet op).
+ */
+export async function setEscrowJettonWallet() {
+  // Correct LADA jetton wallet for the escrow contract, derived on-chain via:
+  //   get_wallet_address(EQDjkkULU_3fxlbrR_kSVsogIi9ifxJ44aWoNHT1zr5ZVLPZ)
+  //   on LADA master EQBjNisz_m-sdA9TcosQMmugdhl6hDjGcCMgQFa85p_8jx7p
+  const CORRECT_WALLET = 'EQAfi7cbO6NvAfYXVvftXli1LijUHwinraa8OLO5Nh2MPwkP';
+
+  const body = beginCell()
+    .storeUint(0x6c726307, 32)  // SetJettonWallet op
+    .storeAddress(Address.parse(CORRECT_WALLET))
+    .endCell();
+
+  await sendToEscrow({ body, value: '0.05', label: `SetJettonWallet(${CORRECT_WALLET})` });
+}
+
+/**
  * Sweep accumulated house fees out of the escrow contract.
  * The 5% from each settled race stays in the contract — this withdraws them.
  *
