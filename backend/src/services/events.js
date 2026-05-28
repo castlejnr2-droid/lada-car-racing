@@ -209,8 +209,8 @@ export async function handleDeposit(e) {
       [race.id, seedHex, winner, loser],
     );
 
-    // Bypass payout: WithdrawJettons from escrow → wait → send LADA direct to winner.
-    // After completion, mark race settled with payout amounts.
+    // Send Payout op to escrow — it pays 95% to winner from its own LADA balance.
+    // Compute expected amounts locally for the DB record (mirrors contract logic).
     const potBigInt    = BigInt(race.stake) * 2n;
     const winnerPayout = potBigInt - (potBigInt * 500n / 10000n);  // 95 %
     const houseFee     = potBigInt - winnerPayout;                  // 5 %
@@ -218,7 +218,6 @@ export async function handleDeposit(e) {
     payoutRace({
       raceId: race.on_chain_id,
       winner,
-      stake: race.stake,
     }).then(async () => {
       console.log(`[events.Deposit] payoutRace completed for race=${race.id}`);
       await query(
