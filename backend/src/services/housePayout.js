@@ -16,8 +16,12 @@
  *
  * Required env vars:
  *   HOUSE_WALLET_MNEMONIC   24-word seed phrase of the contract owner
+ *   HOUSE_WALLET_ADDRESS    UQBcQU2X2a8Ru1z3P0hYgVyGM6GzFzVhDkbWQ99YG73jXcyu
  *   ESCROW_CONTRACT_ADDRESS deployed LadaEscrow address
  *   TONCENTER_API_KEY       optional but recommended
+ *
+ * LADA_JETTON_MASTER and the house LADA jetton wallet are hardcoded below
+ * to prevent accidental use of the wrong token master via env var.
  */
 import { Address, beginCell, toNano, internal } from '@ton/core';
 import { TonClient, WalletContractV5R1 } from '@ton/ton';
@@ -109,23 +113,51 @@ async function sendToEscrow({ body, value, label }) {
   console.log(`[housePayout] ${label} sent OK | seqno=${seqno}`);
 }
 
+// Hardcoded LADA jetton master address (mainnet).
+// Used to ensure we always resolve the correct LADA token wallet, regardless
+// of what LADA_JETTON_MASTER env var says.
+const LADA_JETTON_MASTER = 'EQBjNisz_m-sdA9TcosQMmugdhl6hDjGcCMgQFa85p_8jx7p';
+
+// Hardcoded house wallet LADA jetton wallet address.
+// Derived by calling get_wallet_address(house=UQBcQU2X2a8Ru1z3P0hYgVyGM6GzFzVhDkbWQ99YG73jXcyu)
+// on the LADA master above. Used as a fallback if the on-chain lookup fails.
+const HOUSE_LADA_JETTON_WALLET = 'EQBxiNo_ntc1OhQr_l86LiYKmOtVK95TmjO9JcQvkiO6Ny2C';
+
 /**
- * Resolve the house wallet's own LADA jetton wallet address via get_wallet_address.
+ * Resolve the house wallet's LADA jetton wallet address.
+ *
+ * Always queries the hardcoded LADA master (not the env var) so we are
+ * certain to get the LADA wallet and not some other token's wallet.
+ * Falls back to the hardcoded address if the on-chain call fails.
  */
 async function getHouseJettonWallet() {
-  const ladaMaster      = config.ton.ladaJettonMaster;
   const houseWalletAddr = config.ton.houseWallet;
-  if (!ladaMaster)      throw new Error('[housePayout] LADA_JETTON_MASTER not configured');
   if (!houseWalletAddr) throw new Error('[housePayout] HOUSE_WALLET_ADDRESS not configured');
 
-  const client = getClient();
-  const result = await client.runMethod(
-    Address.parse(ladaMaster),
-    'get_wallet_address',
-    [{ type: 'slice', cell: beginCell().storeAddress(Address.parse(houseWalletAddr)).endCell() }],
-  );
-  const addr = result.stack.readAddress();
-  console.log('[housePayout] house LADA jetton wallet:', addr.toString({ urlSafe: true, bounceable: false }));
+  let addr;
+  try {
+    const client = getClient();
+    const result = await client.runMethod(
+      Address.parse(LADA_JETTON_MASTER),
+      'get_wallet_address',
+      [{ type: 'slice', cell: beginCell().storeAddress(Address.parse(houseWalletAddr)).endCell() }],
+    );
+    addr = result.stack.readAddress();
+    const addrStr = addr.toString({ urlSafe: true, bounceable: true });
+    // Sanity-check: must match the known hardcoded address
+    if (addrStr !== HOUSE_LADA_JETTON_WALLET) {
+      console.warn(
+        `[housePayout] getHouseJettonWallet: on-chain result (${addrStr}) ` +
+        `differs from hardcoded address (${HOUSE_LADA_JETTON_WALLET}) — using hardcoded`,
+      );
+      addr = Address.parse(HOUSE_LADA_JETTON_WALLET);
+    }
+  } catch (e) {
+    console.warn(`[housePayout] getHouseJettonWallet: on-chain lookup failed (${e.message}) — using hardcoded fallback`);
+    addr = Address.parse(HOUSE_LADA_JETTON_WALLET);
+  }
+
+  console.log('[housePayout] using LADA jetton wallet:', addr.toString({ urlSafe: true, bounceable: true }));
   return addr;
 }
 
