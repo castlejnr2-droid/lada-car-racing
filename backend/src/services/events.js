@@ -32,13 +32,14 @@ function getTonClient() {
 }
 
 /**
- * Query raceOf(raceId) on the escrow contract and return the on-chain race
- * state integer, or null if the race doesn't exist / call fails.
+ * Query raceOf(raceId) on the escrow contract.
+ * Returns all Race struct fields, or null if the race doesn't exist / call fails.
  *
- * Race struct field order (lada_escrow.tact):
+ * Tact nullable getter: stack.readTupleOpt() returns null when Race? is null,
+ * or a TupleReader over the struct fields in declaration order:
  *   stake(coins) player1(addr) player2(addr) deposited1(bool) deposited2(bool) state(uint8)
  */
-async function getOnChainRaceState(raceIdStr) {
+async function getOnChainRace(raceIdStr) {
   const escrow = config.ton.escrowAddress;
   if (!escrow) return null;
   try {
@@ -48,22 +49,24 @@ async function getOnChainRaceState(raceIdStr) {
       'raceOf',
       [{ type: 'int', value: BigInt(raceIdStr) }],
     );
-    const stack = result.stack;
-    // raceOf returns Race? — null tuple if not found
-    // Tact nullable: first item is int (-1 = some, 0 = none)
-    const flag = stack.readNumber();
-    if (flag === 0) return null;   // race not found on-chain
-    // Read Race struct fields
-    stack.readBigNumber();         // stake (coins)
-    const p1 = stack.readAddress();
-    const p2 = stack.readAddress();
-    stack.readBoolean();           // deposited1
-    stack.readBoolean();           // deposited2
-    const state = stack.readNumber(); // state (uint8)
-    return { state, player1: p1.toString({ urlSafe: true, bounceable: false }),
-                    player2: p2.toString({ urlSafe: true, bounceable: false }) };
+    const inner = result.stack.readTupleOpt();
+    if (!inner) return null;   // race not found on-chain
+    const stake      = inner.readBigNumber();
+    const player1    = inner.readAddress();
+    const player2    = inner.readAddress();
+    const deposited1 = inner.readBoolean();
+    const deposited2 = inner.readBoolean();
+    const state      = inner.readNumber();   // uint8: 0=AWAITING_DEPOSITS, 1=FUNDED
+    return {
+      state,
+      stake:      stake.toString(),
+      player1:    player1.toString({ urlSafe: true, bounceable: false }),
+      player2:    player2.toString({ urlSafe: true, bounceable: false }),
+      deposited1,
+      deposited2,
+    };
   } catch (e) {
-    console.warn(`[events] getOnChainRaceState(${raceIdStr}) failed:`, e.message);
+    console.warn(`[events] getOnChainRace(${raceIdStr}) failed:`, e.message);
     return null;
   }
 }
@@ -269,39 +272,43 @@ export async function handleDeposit(e) {
     // Verify the escrow's on-chain race is actually FUNDED before sending Payout.
     // The indexer credits deposits even when the escrow refunds them (e.g. wrong
     // player, forwardPayload issue), so the on-chain and DB states can diverge.
-    const onChainRace = await getOnChainRaceState(race.on_chain_id);
+    const onChainRace = await getOnChainRace(race.on_chain_id);
     if (!onChainRace) {
       console.error(
         `[events.Deposit] ✗ raceOf(${race.on_chain_id}) returned null — ` +
         `race not found on-chain. CreateRace may have failed. Skipping Payout.`,
       );
-    } else if (onChainRace.state !== STATE_FUNDED) {
-      console.error(
-        `[events.Deposit] ✗ on-chain race state=${onChainRace.state} (expected ${STATE_FUNDED}=FUNDED). ` +
-        `on-chain player1=${onChainRace.player1} player2=${onChainRace.player2}. ` +
-        `DB player1=${race.player1} player2=${race.player2}. Skipping Payout.`,
-      );
     } else {
-      console.log(
-        `[events.Deposit] ✓ on-chain race FUNDED | ` +
-        `p1=${onChainRace.player1} p2=${onChainRace.player2} winner=${winner}`,
-      );
-      payoutRace({
-        raceId: race.on_chain_id,
-        winner,
-      }).then(async () => {
-        console.log(`[events.Deposit] payoutRace sent for race=${race.id}`);
-        await query(
-          `UPDATE races
-              SET winner_payout = $2,
-                  house_fee     = $3
-            WHERE id = $1`,
-          [race.id, winnerPayout.toString(), houseFee.toString()],
+      console.log(`[events.Deposit] raceOf(${race.on_chain_id}) full result:`);
+      console.log(`[events.Deposit]   state     = ${onChainRace.state} (0=AWAITING_DEPOSITS 1=FUNDED)`);
+      console.log(`[events.Deposit]   stake     = ${onChainRace.stake}`);
+      console.log(`[events.Deposit]   player1   = ${onChainRace.player1}`);
+      console.log(`[events.Deposit]   player2   = ${onChainRace.player2}`);
+      console.log(`[events.Deposit]   deposited1= ${onChainRace.deposited1}`);
+      console.log(`[events.Deposit]   deposited2= ${onChainRace.deposited2}`);
+      if (onChainRace.state !== STATE_FUNDED) {
+        console.error(
+          `[events.Deposit] ✗ on-chain state=${onChainRace.state} expected ${STATE_FUNDED}=FUNDED — Skipping Payout.`,
         );
-      }).catch((err) => {
-        console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
-        console.error(`[events.Deposit] admin can retry: on_chain_id=${race.on_chain_id} winner=${winner}`);
-      });
+      } else {
+        console.log(`[events.Deposit] ✓ on-chain race FUNDED — sending Payout op winner=${winner}`);
+        payoutRace({
+          raceId: race.on_chain_id,
+          winner,
+        }).then(async () => {
+          console.log(`[events.Deposit] payoutRace sent for race=${race.id}`);
+          await query(
+            `UPDATE races
+                SET winner_payout = $2,
+                    house_fee     = $3
+              WHERE id = $1`,
+            [race.id, winnerPayout.toString(), houseFee.toString()],
+          );
+        }).catch((err) => {
+          console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
+          console.error(`[events.Deposit] admin can retry: on_chain_id=${race.on_chain_id} winner=${winner}`);
+        });
+      }
     }
   } else if (newP1dep || newP2dep) {
     console.log(`[events.Deposit] one deposit in, waiting for other (p1=${newP1dep} p2=${newP2dep})`);
