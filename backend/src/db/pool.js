@@ -23,8 +23,8 @@ pool.on('error', (err) => {
 export async function query(text, params) {
   const start = Date.now();
   const res = await pool.query(text, params);
-  if (process.env.DEBUG_SQL) {
-    console.log('[sql]', text, 'in', Date.now() - start, 'ms');
+  if (process.env.LOG_SQL === 'true') {
+    console.log('[sql]', text.slice(0, 120).replace(/\s+/g, ' '), '—', Date.now() - start, 'ms');
   }
   return res;
 }
