@@ -13,8 +13,60 @@
  */
 import { randomBytes } from 'crypto';
 import { Address } from '@ton/core';
+import { TonClient } from '@ton/ton';
 import { query } from '../db/pool.js';
 import { payoutRace } from './housePayout.js';
+import { config } from '../config.js';
+
+// STATE_FUNDED = 1  (matches lada_escrow.tact constant)
+const STATE_FUNDED = 1;
+
+let _tonClient = null;
+function getTonClient() {
+  if (_tonClient) return _tonClient;
+  const endpoint = config.ton.network === 'mainnet'
+    ? 'https://toncenter.com/api/v2/jsonRPC'
+    : 'https://testnet.toncenter.com/api/v2/jsonRPC';
+  _tonClient = new TonClient({ endpoint, apiKey: config.ton.apiKey || undefined });
+  return _tonClient;
+}
+
+/**
+ * Query raceOf(raceId) on the escrow contract and return the on-chain race
+ * state integer, or null if the race doesn't exist / call fails.
+ *
+ * Race struct field order (lada_escrow.tact):
+ *   stake(coins) player1(addr) player2(addr) deposited1(bool) deposited2(bool) state(uint8)
+ */
+async function getOnChainRaceState(raceIdStr) {
+  const escrow = config.ton.escrowAddress;
+  if (!escrow) return null;
+  try {
+    const client = getTonClient();
+    const result = await client.runMethod(
+      Address.parse(escrow),
+      'raceOf',
+      [{ type: 'int', value: BigInt(raceIdStr) }],
+    );
+    const stack = result.stack;
+    // raceOf returns Race? — null tuple if not found
+    // Tact nullable: first item is int (-1 = some, 0 = none)
+    const flag = stack.readNumber();
+    if (flag === 0) return null;   // race not found on-chain
+    // Read Race struct fields
+    stack.readBigNumber();         // stake (coins)
+    const p1 = stack.readAddress();
+    const p2 = stack.readAddress();
+    stack.readBoolean();           // deposited1
+    stack.readBoolean();           // deposited2
+    const state = stack.readNumber(); // state (uint8)
+    return { state, player1: p1.toString({ urlSafe: true, bounceable: false }),
+                    player2: p2.toString({ urlSafe: true, bounceable: false }) };
+  } catch (e) {
+    console.warn(`[events] getOnChainRaceState(${raceIdStr}) failed:`, e.message);
+    return null;
+  }
+}
 
 // ── Server-side race physics (mirrors frontend game/rng.js + game/physics.js) ──
 // MUST stay in sync with the frontend implementations so the animation winner
@@ -209,31 +261,48 @@ export async function handleDeposit(e) {
       [race.id, seedHex, winner, loser],
     );
 
-    // Send Payout op to escrow — it pays 95% to winner from its own LADA balance.
-    // Compute expected amounts locally for the DB record (mirrors contract logic).
+    // Compute expected payout amounts for the DB record (mirrors contract logic).
     const potBigInt    = BigInt(race.stake) * 2n;
     const winnerPayout = potBigInt - (potBigInt * 500n / 10000n);  // 95 %
     const houseFee     = potBigInt - winnerPayout;                  // 5 %
 
-    payoutRace({
-      raceId: race.on_chain_id,
-      winner,
-    }).then(async () => {
-      console.log(`[events.Deposit] payoutRace completed for race=${race.id}`);
-      await query(
-        `UPDATE races
-            SET state='settled',
-                winner_payout = $2,
-                house_fee     = $3,
-                finished_at   = COALESCE(finished_at, now())
-          WHERE id = $1`,
-        [race.id, winnerPayout.toString(), houseFee.toString()],
+    // Verify the escrow's on-chain race is actually FUNDED before sending Payout.
+    // The indexer credits deposits even when the escrow refunds them (e.g. wrong
+    // player, forwardPayload issue), so the on-chain and DB states can diverge.
+    const onChainRace = await getOnChainRaceState(race.on_chain_id);
+    if (!onChainRace) {
+      console.error(
+        `[events.Deposit] ✗ raceOf(${race.on_chain_id}) returned null — ` +
+        `race not found on-chain. CreateRace may have failed. Skipping Payout.`,
       );
-      console.log(`[events.Deposit] race=${race.id} marked settled`);
-    }).catch((err) => {
-      console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
-      console.error(`[events.Deposit] admin can retry: on_chain_id=${race.on_chain_id} winner=${winner} stake=${race.stake}`);
-    });
+    } else if (onChainRace.state !== STATE_FUNDED) {
+      console.error(
+        `[events.Deposit] ✗ on-chain race state=${onChainRace.state} (expected ${STATE_FUNDED}=FUNDED). ` +
+        `on-chain player1=${onChainRace.player1} player2=${onChainRace.player2}. ` +
+        `DB player1=${race.player1} player2=${race.player2}. Skipping Payout.`,
+      );
+    } else {
+      console.log(
+        `[events.Deposit] ✓ on-chain race FUNDED | ` +
+        `p1=${onChainRace.player1} p2=${onChainRace.player2} winner=${winner}`,
+      );
+      payoutRace({
+        raceId: race.on_chain_id,
+        winner,
+      }).then(async () => {
+        console.log(`[events.Deposit] payoutRace sent for race=${race.id}`);
+        await query(
+          `UPDATE races
+              SET winner_payout = $2,
+                  house_fee     = $3
+            WHERE id = $1`,
+          [race.id, winnerPayout.toString(), houseFee.toString()],
+        );
+      }).catch((err) => {
+        console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
+        console.error(`[events.Deposit] admin can retry: on_chain_id=${race.on_chain_id} winner=${winner}`);
+      });
+    }
   } else if (newP1dep || newP2dep) {
     console.log(`[events.Deposit] one deposit in, waiting for other (p1=${newP1dep} p2=${newP2dep})`);
   }

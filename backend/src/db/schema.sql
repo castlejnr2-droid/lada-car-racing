@@ -149,14 +149,14 @@ ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS min_players INT NOT NULL DEFAULT 2;
 ALTER TABLE lobbies ALTER COLUMN max_players SET DEFAULT 5;
 
 -- v2: owner-payout model — only three states now.
--- Clean up any legacy commit-reveal states FIRST, then enforce the constraint.
+-- Clean up legacy commit-reveal states; keep 'active' (both deposited, payout in-flight).
 UPDATE races
    SET state = 'refunded'
- WHERE state NOT IN ('awaiting_deposits', 'settled', 'refunded');
+ WHERE state NOT IN ('awaiting_deposits', 'active', 'settled', 'refunded');
 
 ALTER TABLE races DROP CONSTRAINT IF EXISTS races_state_chk;
 ALTER TABLE races ADD CONSTRAINT races_state_chk CHECK (state IN (
-  'awaiting_deposits','settled','refunded'
+  'awaiting_deposits','active','settled','refunded'
 ));
 
 -- ─────────────────────────────────────────────────────────────────────
