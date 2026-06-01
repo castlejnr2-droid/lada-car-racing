@@ -253,9 +253,10 @@ export async function setPlayer2OnChain({ raceId, player2 }) {
  */
 export async function setEscrowJettonWallet() {
   // Correct LADA jetton wallet for the escrow contract, derived on-chain via:
-  //   get_wallet_address(EQDjkkULU_3fxlbrR_kSVsogIi9ifxJ44aWoNHT1zr5ZVLPZ)
+  //   get_wallet_address(EQAGSH3bcf6A8RKnhbjwSvPT_NGiquLx4-bHVAc-zBXBo0JF)
   //   on LADA master EQBjNisz_m-sdA9TcosQMmugdhl6hDjGcCMgQFa85p_8jx7p
-  const CORRECT_WALLET = 'EQAfi7cbO6NvAfYXVvftXli1LijUHwinraa8OLO5Nh2MPwkP';
+  // (Set during deployment — confirmed via jettonWalletAddress() getter)
+  const CORRECT_WALLET = 'EQAtMA7Rq2DrsATe5Pxbgy5VWXpnhC9ctmZA0V4d_5YaUbyi';
 
   const body = beginCell()
     .storeUint(0x6c726307, 32)  // SetJettonWallet op
