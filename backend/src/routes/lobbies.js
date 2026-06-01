@@ -173,15 +173,16 @@ router.post('/:id/join', async (req, res, next) => {
       [id],
     );
 
-    // Call SetPlayer2 on-chain so the contract accepts player2's deposit
-    setPlayer2OnChain({
-      raceId: race.on_chain_id,
-      player2: address,
-    }).then(() => {
-      console.log(`[lobbies] SetPlayer2 sent for race=${race.id} player2=${address}`);
-    }).catch((err) => {
+    // Call SetPlayer2 on-chain and wait for confirmation before responding.
+    // Without this wait, player2 can deposit before the escrow knows their address,
+    // causing the escrow to reject the transfer (it still sees the house-wallet placeholder).
+    try {
+      await setPlayer2OnChain({ raceId: race.on_chain_id, player2: address });
+      console.log(`[lobbies] SetPlayer2 confirmed for race=${race.id} player2=${address}`);
+    } catch (err) {
       console.error(`[lobbies] SetPlayer2 FAILED for race=${race.id}:`, err.message);
-    });
+      return res.status(500).json({ error: 'Failed to register player2 on-chain: ' + err.message });
+    }
 
     console.log(`[lobbies] joined lobby=${id} player2=${address} race=${race.id}`);
     res.json({ ok: true, raceStarted: true, race: { ...race, player2: address } });

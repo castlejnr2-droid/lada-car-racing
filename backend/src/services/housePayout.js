@@ -243,7 +243,7 @@ export async function setPlayer2OnChain({ raceId, player2 }) {
     .storeAddress(p2Addr)
     .endCell();
 
-  await sendToEscrow({ body, value: '0.05', label: `SetPlayer2(${raceIdBigInt}, p2=${player2})` });
+  await sendToEscrow({ body, value: '0.05', label: `SetPlayer2(${raceIdBigInt}, p2=${player2})`, waitForConfirmation: true });
 }
 
 /**

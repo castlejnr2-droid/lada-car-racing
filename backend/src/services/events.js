@@ -313,9 +313,31 @@ export async function handleDeposit(e) {
     console.log(`[events.Deposit]   deposited2= ${onChainRace.deposited2}`);
 
     if (onChainRace.state !== STATE_FUNDED) {
-      console.error(`[events.Deposit] ✗ state=${onChainRace.state} expected 1=FUNDED — Aborting Payout`);
-      console.log(`[events.Deposit] ═══════════════════════════════════════════════════════════`);
-      return { ok: false, reason: 'race_not_funded' };
+      // The deposit TX may still be in-flight on-chain when we first query.
+      // Poll every 3 s for up to 30 s waiting for the escrow to reach FUNDED.
+      console.warn(`[events.Deposit] state=${onChainRace.state} (not FUNDED) — polling for up to 30 s`);
+      let funded = false;
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3_000));
+        const polled = await getOnChainRace(race.on_chain_id);
+        if (!polled) {
+          console.warn(`[events.Deposit] poll: raceOf() returned null — stopping`);
+          break;
+        }
+        console.log(`[events.Deposit] poll: state=${polled.state} dep1=${polled.deposited1} dep2=${polled.deposited2}`);
+        if (polled.state === STATE_FUNDED) {
+          funded = true;
+          Object.assign(onChainRace, polled);   // update for the log below
+          break;
+        }
+      }
+      if (!funded) {
+        console.error(`[events.Deposit] ✗ state never reached FUNDED within 30 s — Aborting Payout`);
+        console.log(`[events.Deposit] ═══════════════════════════════════════════════════════════`);
+        return { ok: false, reason: 'race_not_funded' };
+      }
+      console.log(`[events.Deposit] ✓ state reached FUNDED after polling`);
     }
 
     console.log(`[events.Deposit] ✓ state=FUNDED — firing Payout op | winner=${winner}`);
