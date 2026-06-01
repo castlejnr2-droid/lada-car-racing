@@ -42,7 +42,11 @@ router.get('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
     const race = await query(
-      `SELECT r.*,
+      `SELECT r.id, r.lobby_id, r.on_chain_id::text, r.player1, r.player2,
+              r.stake::text, r.pot::text, r.state, r.winner, r.loser,
+              r.combined_seed, r.winner_payout::text, r.house_fee::text,
+              r.settle_tx_hash, r.player1_deposited, r.player2_deposited,
+              r.created_at, r.finished_at,
               p1.username AS player1_username,
               p2.username AS player2_username
          FROM races r

@@ -130,6 +130,20 @@ async function getOnChainRace(raceIdStr) {
       return null;
     }
 
+    // Race struct field order (lada_escrow.tact + compiled FunC __tact_tuple_create_6):
+    //   it[0] = stake      (Int as coins  → BigInt nanoLADA)
+    //   it[1] = player1    (Address       → Cell)
+    //   it[2] = player2    (Address       → Cell)
+    //   it[3] = deposited1 (Bool          → BigInt: -1n=true, 0n=false)
+    //   it[4] = deposited2 (Bool          → BigInt: -1n=true, 0n=false)
+    //   it[5] = state      (Int as uint8  → BigInt: 0n=AWAITING_DEPOSITS, 1n=FUNDED)
+    const stakeBn    = _asBigInt(it[0]);   // it[0] = stake
+    const p1Addr     = _asAddress(it[1]);  // it[1] = player1
+    const p2Addr     = _asAddress(it[2]);  // it[2] = player2
+    const deposited1 = _asBool(it[3]);     // it[3] = deposited1
+    const deposited2 = _asBool(it[4]);     // it[4] = deposited2
+    const stateBn    = _asBigInt(it[5]);   // it[5] = state
+
     // Log raw values so we can verify types and values in production logs
     console.log(`[events] getOnChainRace(${raceIdStr}) raw items:`);
     for (let i = 0; i < it.length; i++) {
@@ -140,15 +154,7 @@ async function getOnChainRace(raceIdStr) {
                    `${typeof v}(${v})`;
       console.log(`[events]   it[${i}]: ${kind}`);
     }
-
-    // Parse fields in struct declaration order:
-    //   stake(coins) player1(addr) player2(addr) deposited1(bool) deposited2(bool) state(uint8)
-    const stakeBn    = _asBigInt(it[0]);
-    const p1Addr     = _asAddress(it[1]);
-    const p2Addr     = _asAddress(it[2]);
-    const deposited1 = _asBool(it[3]);
-    const deposited2 = _asBool(it[4]);
-    const stateBn    = _asBigInt(it[5]);
+    console.log(`[events] getOnChainRace(${raceIdStr}) parsed: stake=${stakeBn} dep1=${deposited1} dep2=${deposited2} state=${stateBn}`);
 
     if (stakeBn === null || !p1Addr || !p2Addr || stateBn === null) {
       console.warn(`[events] getOnChainRace(${raceIdStr}): failed to parse one or more fields`);
