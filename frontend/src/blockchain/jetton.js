@@ -220,19 +220,18 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
 
   const raceIdBigInt = BigInt(raceIdOnChain);   // on_chain_id is a string from the API
 
-  // forward_payload: uint64 raceId stored INLINE — no reference cell, no Either bit.
+  // forward_payload: uint64 raceId stored directly, NO Either discriminant prefix.
   //
+  // The LADA jetton_wallet_v1 passes the remaining bits of the JettonTransfer body
+  // verbatim into the TokenNotification (it does NOT interpret or strip the Either bit).
   // The contract reads:
   //   let payload: Slice = msg.forwardPayload;   // "Slice as remaining"
   //   let raceId: Int = payload.loadUint(64);
   //
-  // "Slice as remaining" captures whatever bits are left in the notification body
-  // after the jetton wallet builds it.  The standard LADA jetton wallet strips the
-  // Either discriminant and inlines the payload bits, so the first 64 bits the
-  // contract sees must be the raceId — no discriminant prefix.
-  //
-  // Using storeBit(1)+storeRef would work only if the wallet always unpacks the ref;
-  // encoding inline with Either=0 is safer and matches the contract's expectation.
+  // If storeBit(0) were prepended before storeUint(raceId, 64), the notification
+  // forwardPayload would be 65 bits and loadUint(64) would read raceId >> 1 — wrong.
+  // Confirmed by tracing on-chain TokenNotification bodies: remainingBits is always
+  // exactly 65 when storeBit(0) is used, causing every deposit to be rejected.
 
   console.log('[jetton] buildDeposit ─────────────────────────────');
   console.log('[jetton]   owner              :', owner);
@@ -240,7 +239,7 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   console.log('[jetton]   raceIdOnChain      :', raceIdOnChain, '→ BigInt:', raceIdBigInt.toString());
   console.log('[jetton]   ESCROW_ADDRESS     :', ESCROW_ADDRESS);
   console.log('[jetton]   userJettonWallet   :', userJettonWallet, '→', userJettonWalletAddr);
-  console.log('[jetton]   forward_payload    : Either=0 inline storeUint(raceId, 64)');
+  console.log('[jetton]   forward_payload    : storeUint(raceId, 64) — no Either prefix');
 
   const body = beginCell()
     .storeUint(JETTON_TRANSFER_OP, 32)            // 0x0f8a7ea5
@@ -250,8 +249,10 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
     .storeAddress(Address.parse(owner))           // response_destination
     .storeBit(0)                                  // custom_payload = null
     .storeCoins(toNano('0.05'))                   // forward_ton_amount
-    .storeBit(0)                                  // Either: 0 = inline payload
     .storeUint(raceIdBigInt, 64)                  // forward_payload: raceId as uint64 inline
+    // NOTE: no Either discriminant bit. The LADA jetton_wallet_v1 passes the remaining
+    // slice verbatim to TokenNotification — it does NOT strip the Either bit.
+    // If storeBit(0) were prepended, the contract would read loadUint(64) = raceId >> 1.
     .endCell();
 
   const bocBase64 = body.toBoc().toString('base64');
