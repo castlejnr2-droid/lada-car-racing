@@ -8,7 +8,7 @@
  *
  * Primary: Toncenter v2 runGetMethod.  Fallback: TonAPI v2 REST.
  */
-import { Address, beginCell, Cell, toNano } from '@ton/core';
+import { Address, beginCell, toNano } from '@ton/core';
 
 const JETTON_TRANSFER_OP = 0x0f8a7ea5;
 
@@ -214,12 +214,19 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
 
   const raceIdBigInt = BigInt(raceIdOnChain);   // on_chain_id is a string from the API
 
-  // forward_payload: pure 64-bit raceId in a reference cell.
-  // The Either discriminant bit is handled by the transfer message structure;
-  // it must NOT appear inside the payload content.
-  const forwardPayload = beginCell()
-    .storeUint(raceIdBigInt, 64)
-    .endCell();
+  // forward_payload: uint64 raceId stored INLINE — no reference cell, no Either bit.
+  //
+  // The contract reads:
+  //   let payload: Slice = msg.forwardPayload;   // "Slice as remaining"
+  //   let raceId: Int = payload.loadUint(64);
+  //
+  // "Slice as remaining" captures whatever bits are left in the notification body
+  // after the jetton wallet builds it.  The standard LADA jetton wallet strips the
+  // Either discriminant and inlines the payload bits, so the first 64 bits the
+  // contract sees must be the raceId — no discriminant prefix.
+  //
+  // Using storeBit(1)+storeRef would work only if the wallet always unpacks the ref;
+  // encoding inline with Either=0 is safer and matches the contract's expectation.
 
   console.log('[jetton] buildDeposit ─────────────────────────────');
   console.log('[jetton]   owner          :', owner);
@@ -227,7 +234,7 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   console.log('[jetton]   raceIdOnChain  :', raceIdOnChain, '→ BigInt:', raceIdBigInt.toString());
   console.log('[jetton]   ESCROW_ADDRESS :', ESCROW_ADDRESS);
   console.log('[jetton]   userJettonWallet:', userJettonWallet);
-  console.log('[jetton]   forward_payload : storeUint(raceId, 64) in ref cell');
+  console.log('[jetton]   forward_payload : Either=0 inline storeUint(raceId, 64)');
 
   const body = beginCell()
     .storeUint(JETTON_TRANSFER_OP, 32)            // 0x0f8a7ea5
@@ -237,8 +244,8 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
     .storeAddress(Address.parse(owner))           // response_destination
     .storeBit(0)                                  // custom_payload = null
     .storeCoins(toNano('0.05'))                   // forward_ton_amount
-    .storeBit(1)                                  // Either: reference cell follows
-    .storeRef(forwardPayload)                     // forward_payload (raceId as uint64)
+    .storeBit(0)                                  // Either: 0 = inline payload
+    .storeUint(raceIdBigInt, 64)                  // forward_payload: raceId as uint64 inline
     .endCell();
 
   const bocBase64 = body.toBoc().toString('base64');
