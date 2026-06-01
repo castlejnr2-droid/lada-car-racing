@@ -31,13 +31,67 @@ function getTonClient() {
   return _tonClient;
 }
 
+// ── raceOf() parsing helpers ──────────────────────────────────────────────────
+//
+// @ton/ton@15.x + toncenter v2 stack encoding quirk:
+//   Outer stack items  → parsed by parseStackItem → { type, items/value/... }
+//   Inner tuple items  → parsed by parseStackEntry → RAW values:
+//       integer  → BigInt (e.g. -1n for true, 0n for false)
+//       slice    → Cell
+//       null     → { type: 'null' }
+//
+// readBigNumber() / readAddress() / readBoolean() all expect { type: 'int', value }
+// TupleItem objects and throw "Not a number" / "Not an address" on raw values.
+// We therefore bypass TupleReader methods entirely and access .items directly,
+// then use type-agnostic extractors below.
+
+/**
+ * Coerce a raw stack entry to BigInt.
+ * Handles: raw BigInt (toncenter v2), wrapped { type:'int', value } TupleItem,
+ * and plain Number (safety net).
+ */
+function _asBigInt(v) {
+  if (typeof v === 'bigint') return v;
+  if (v && typeof v === 'object' && v.type === 'int') return BigInt(v.value);
+  if (typeof v === 'number' && Number.isFinite(v)) return BigInt(Math.trunc(v));
+  return null;
+}
+
+/**
+ * Coerce a raw stack entry to boolean.
+ * TVM bool: -1 = true, 0 = false.
+ */
+function _asBool(v) {
+  const n = _asBigInt(v);
+  if (n !== null) return n !== 0n;
+  // Fallback for unexpected types
+  return Boolean(v) && v !== 0;
+}
+
+/**
+ * Load a TON Address from a raw stack entry that is a Cell (address slice).
+ * Also handles wrapped { type:'slice', cell } objects just in case.
+ */
+function _asAddress(v) {
+  if (!v) return null;
+  if (typeof v.beginParse === 'function') {
+    // Raw Cell
+    return v.beginParse().loadAddress();
+  }
+  if (typeof v === 'object' && v.type === 'slice' && v.cell) {
+    return v.cell.beginParse().loadAddress();
+  }
+  return null;
+}
+
 /**
  * Query raceOf(raceId) on the escrow contract.
  * Returns all Race struct fields, or null if the race doesn't exist / call fails.
  *
- * Tact nullable getter: stack.readTupleOpt() returns null when Race? is null,
- * or a TupleReader over the struct fields in declaration order:
- *   stake(coins) player1(addr) player2(addr) deposited1(bool) deposited2(bool) state(uint8)
+ * Tact Race? nullable getter pushes either:
+ *   - null item → race not found
+ *   - 6-element tuple → (stake, player1, player2, deposited1, deposited2, state)
+ *     matching struct declaration order in lada_escrow.tact
  */
 async function getOnChainRace(raceIdStr) {
   const escrow = config.ton.escrowAddress;
@@ -50,40 +104,63 @@ async function getOnChainRace(raceIdStr) {
       [{ type: 'int', value: BigInt(raceIdStr) }],
     );
 
-    // @ton/ton@15.x + toncenter v2: readTupleOpt() returns a TupleReader whose
-    // .items are raw values produced by parseStackEntry — BigInt for integers,
-    // Cell for slices/cells — NOT the { type, value } TupleItem objects that
-    // readBigNumber() / readAddress() / readBoolean() expect.  Using those
-    // methods therefore throws "Not a number" even when the race exists.
-    // Fix: read the outer stack item directly and access .items ourselves.
     const outerItem = result.stack.items[0];
+
+    // Log raw outer item type so we can spot unexpected encoding
+    console.log(`[events] getOnChainRace(${raceIdStr}) outerItem.type=${outerItem?.type} items.length=${outerItem?.items?.length}`);
+
     if (!outerItem || outerItem.type === 'null') return null;   // race not on-chain
+
     if (outerItem.type !== 'tuple') {
-      console.warn(`[events] getOnChainRace(${raceIdStr}): unexpected stack item type "${outerItem.type}"`);
+      console.warn(`[events] getOnChainRace(${raceIdStr}): unexpected outer type "${outerItem.type}"`);
       return null;
     }
 
-    const it = outerItem.items;   // [stake, p1Cell, p2Cell, dep1, dep2, state] — raw values
-    if (it.length < 6) return null;
+    let it = outerItem.items;   // should be [stake, p1, p2, dep1, dep2, state]
 
-    // it[0] = stake   : BigInt (nanocoins)
-    // it[1] = player1 : Cell  (address slice)
-    // it[2] = player2 : Cell  (address slice)
-    // it[3] = dep1    : BigInt  (-1n = true, 0n = false)
-    // it[4] = dep2    : BigInt  (-1n = true, 0n = false)
-    // it[5] = state   : BigInt  (0n = AWAITING_DEPOSITS, 1n = FUNDED)
-    const stake      = it[0];
-    const player1    = it[1].beginParse().loadAddress();
-    const player2    = it[2].beginParse().loadAddress();
-    const deposited1 = it[3] !== 0n;
-    const deposited2 = it[4] !== 0n;
-    const state      = Number(it[5]);
+    // Tact sometimes wraps the struct in an extra outer tuple for nullable encoding.
+    // Detect: 1-element tuple whose sole element is itself a tuple with 6 items.
+    if (it.length === 1 && it[0] && it[0].type === 'tuple' && it[0].items?.length >= 6) {
+      console.log(`[events] getOnChainRace(${raceIdStr}): unwrapping extra nullable tuple layer`);
+      it = it[0].items;
+    }
+
+    if (it.length < 6) {
+      console.warn(`[events] getOnChainRace(${raceIdStr}): too few items (${it.length}), expected 6`);
+      return null;
+    }
+
+    // Log raw values so we can verify types and values in production logs
+    console.log(`[events] getOnChainRace(${raceIdStr}) raw items:`);
+    for (let i = 0; i < it.length; i++) {
+      const v    = it[i];
+      const kind = typeof v === 'bigint' ? `bigint(${v})` :
+                   v === null            ? 'null' :
+                   typeof v === 'object' ? `object{type:${v.type},ctor:${v.constructor?.name}}` :
+                   `${typeof v}(${v})`;
+      console.log(`[events]   it[${i}]: ${kind}`);
+    }
+
+    // Parse fields in struct declaration order:
+    //   stake(coins) player1(addr) player2(addr) deposited1(bool) deposited2(bool) state(uint8)
+    const stakeBn    = _asBigInt(it[0]);
+    const p1Addr     = _asAddress(it[1]);
+    const p2Addr     = _asAddress(it[2]);
+    const deposited1 = _asBool(it[3]);
+    const deposited2 = _asBool(it[4]);
+    const stateBn    = _asBigInt(it[5]);
+
+    if (stakeBn === null || !p1Addr || !p2Addr || stateBn === null) {
+      console.warn(`[events] getOnChainRace(${raceIdStr}): failed to parse one or more fields`);
+      console.warn(`[events]   stake=${stakeBn} p1=${p1Addr} p2=${p2Addr} state=${stateBn}`);
+      return null;
+    }
 
     return {
-      state,
-      stake:      stake.toString(),
-      player1:    player1.toString({ urlSafe: true, bounceable: false }),
-      player2:    player2.toString({ urlSafe: true, bounceable: false }),
+      state:      Number(stateBn),
+      stake:      stakeBn.toString(),
+      player1:    p1Addr.toString({ urlSafe: true, bounceable: false }),
+      player2:    p2Addr.toString({ urlSafe: true, bounceable: false }),
       deposited1,
       deposited2,
     };
