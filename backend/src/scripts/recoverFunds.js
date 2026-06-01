@@ -50,14 +50,35 @@ const OP_WITHDRAW_JETTONS = 0x6c726306;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Retry an async fn up to `attempts` times on HTTP 429, with exponential backoff. */
+async function withRetry(fn, attempts = 5, baseDelayMs = 2000) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const is429 = e?.message?.includes('429') || e?.response?.status === 429 || e?.status === 429;
+      if (!is429 || i === attempts - 1) throw e;
+      const delay = baseDelayMs * 2 ** i;
+      console.log(`    [retry ${i + 1}/${attempts}] 429 rate-limit — waiting ${delay / 1000}s…`);
+      await sleep(delay);
+    }
+  }
+}
+
 // ─── Address helpers ──────────────────────────────────────────────────────────
 
-/** Extract an Address from a raw stack item (outer TonClient parseStackItem result). */
+/**
+ * Extract an Address from a raw stack item (outer TonClient parseStackItem result).
+ * Toncenter v2 returns address/slice getter results as { type:'cell', cell:Cell }
+ * (not 'slice' as one might expect) — handle both.
+ */
 function stackItemToAddress(item) {
   if (!item) return null;
-  // Outer stack items parsed by parseStackItem → { type: 'slice', cell: Cell }
-  if (item.type === 'slice' && item.cell) return item.cell.beginParse().loadAddress();
-  // Raw Cell (shouldn't happen for outer items, but be safe)
+  // type:'cell' or type:'slice' — both carry a .cell property with the data
+  if ((item.type === 'slice' || item.type === 'cell') && item.cell) {
+    return item.cell.beginParse().loadAddress();
+  }
+  // Raw Cell fallback
   if (typeof item.beginParse === 'function') return item.beginParse().loadAddress();
   return null;
 }
@@ -73,10 +94,11 @@ function stackItemToBigInt(item) {
 // ─── Send + confirm ───────────────────────────────────────────────────────────
 
 async function sendAndWait(contract, keyPair, to, body, tonValue, label) {
-  const seqno = await contract.getSeqno();
+  const seqno = await withRetry(() => contract.getSeqno());
   console.log(`    [${label}] seqno=${seqno}  value=${tonValue} TON  to=${to.toString({ urlSafe: true, bounceable: true })}`);
 
-  await contract.sendTransfer({
+  await sleep(2000); // brief pause so rate limiter recovers before send
+  await withRetry(() => contract.sendTransfer({
     seqno,
     secretKey: keyPair.secretKey,
     messages: [
@@ -87,14 +109,14 @@ async function sendAndWait(contract, keyPair, to, body, tonValue, label) {
         body,
       }),
     ],
-  });
+  }));
   console.log(`    [${label}] tx sent — polling for confirmation (up to 30 s)…`);
 
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     await sleep(3_000);
     try {
-      const newSeqno = await contract.getSeqno();
+      const newSeqno = await withRetry(() => contract.getSeqno());
       if (newSeqno > seqno) {
         console.log(`    [${label}] confirmed  seqno ${seqno} → ${newSeqno}`);
         await sleep(5_000); // give escrow one extra block to process the inbound message
@@ -160,7 +182,7 @@ async function main() {
     // 1. Check contract is active ─────────────────────────────────────────────
     let contractState;
     try {
-      contractState = await client.getContractState(escrowAddr);
+      contractState = await withRetry(() => client.getContractState(escrowAddr));
     } catch (e) {
       console.log(`  ✗ getContractState failed: ${e.message} — skipping`);
       continue;
@@ -169,22 +191,31 @@ async function main() {
       console.log(`  ⚠ Contract is "${contractState.state}" (not active) — skipping`);
       continue;
     }
+    await sleep(1000);
 
     // 2. TON balance ──────────────────────────────────────────────────────────
-    const tonBalance = await client.getBalance(escrowAddr);
+    const tonBalance = await withRetry(() => client.getBalance(escrowAddr));
     console.log(`  TON balance : ${Number(tonBalance) / 1e9} TON`);
+    await sleep(1000);
 
     // 3. Detect owner and choose signer wallet ────────────────────────────────
     let ownerAddr = null;
     try {
-      const r = await client.runMethod(escrowAddr, 'owner', []);
-      ownerAddr = stackItemToAddress(r.stack.items[0]);
+      const r = await withRetry(() => client.runMethod(escrowAddr, 'owner', []));
+      const raw = r.stack.items[0];
+      console.log(`  owner() raw item: ${JSON.stringify(raw, (k, v) => typeof v === 'bigint' ? v.toString() : v)?.slice(0, 120)}`);
+      ownerAddr = stackItemToAddress(raw);
+      // Fallback: try TupleReader.readAddress() directly
+      if (!ownerAddr) {
+        try { ownerAddr = r.stack.readAddress(); } catch { /* ignore */ }
+      }
     } catch (e) {
       console.warn(`  ⚠ owner() getter failed: ${e.message}`);
     }
     if (ownerAddr) {
       console.log(`  Owner       : ${ownerAddr.toString({ urlSafe: true, bounceable: false })}`);
     }
+    await sleep(1000);
 
     let signerContract;
     if (ownerAddr?.toRawString() === addrV4Raw) {
@@ -201,7 +232,7 @@ async function main() {
     // 4. Get escrow's configured LADA jetton wallet ───────────────────────────
     let escrowJettonWallet = null;
     try {
-      const r = await client.runMethod(escrowAddr, 'jettonWalletAddress', []);
+      const r = await withRetry(() => client.runMethod(escrowAddr, 'jettonWalletAddress', []));
       escrowJettonWallet = stackItemToAddress(r.stack.items[0]);
     } catch (e) {
       console.warn(`  ⚠ jettonWalletAddress() getter failed: ${e.message}`);
@@ -209,12 +240,13 @@ async function main() {
     if (escrowJettonWallet) {
       console.log(`  LADA wallet : ${escrowJettonWallet.toString({ urlSafe: true, bounceable: true })}`);
     }
+    await sleep(1000);
 
     // 5. LADA balance ─────────────────────────────────────────────────────────
     let ladaBalance = 0n;
     if (escrowJettonWallet) {
       try {
-        const r = await client.runMethod(escrowJettonWallet, 'get_wallet_data', []);
+        const r = await withRetry(() => client.runMethod(escrowJettonWallet, 'get_wallet_data', []));
         // Standard jetton wallet: first stack item is balance (int)
         const balItem = r.stack.items[0];
         ladaBalance = stackItemToBigInt(balItem) ?? 0n;
@@ -228,6 +260,7 @@ async function main() {
         }
       }
     }
+    await sleep(1000);
     console.log('');
 
     if (ladaBalance === 0n && tonBalance < toNano('0.01')) {
@@ -239,12 +272,13 @@ async function main() {
     // Prefer the configured houseWallet from the escrow; fall back to owner.
     let ladaDestination = ownerAddr ?? signerContract.address;
     try {
-      const r = await client.runMethod(escrowAddr, 'houseWalletAddress', []);
+      const r = await withRetry(() => client.runMethod(escrowAddr, 'houseWalletAddress', []));
       const hw = stackItemToAddress(r.stack.items[0]);
       if (hw) { ladaDestination = hw; }
     } catch {
       // use fallback silently
     }
+    await sleep(1000);
     console.log(`  LADA → ${ladaDestination.toString({ urlSafe: true, bounceable: false })}`);
     console.log(`  TON  → ${ownerAddr?.toString({ urlSafe: true, bounceable: false }) ?? '(owner)'}`);
     console.log('');
@@ -267,7 +301,8 @@ async function main() {
     // The contract sends SendRemainingBalance to self.owner so we don't need
     // a 'to' in the body.  We attach a tiny amount (0.05 TON) since the
     // message itself needs some TON; the contract returns everything.
-    const tonAfterLadaWithdraw = await client.getBalance(escrowAddr).catch(() => tonBalance);
+    await sleep(1000);
+    const tonAfterLadaWithdraw = await withRetry(() => client.getBalance(escrowAddr)).catch(() => tonBalance);
     if (tonAfterLadaWithdraw > toNano('0.01')) {
       console.log(`  Step 2/2 — withdrawTon: ~${Number(tonAfterLadaWithdraw) / 1e9} TON`);
       // Text message: 4-byte zero prefix + ASCII text (standard TON comment encoding)
@@ -283,11 +318,12 @@ async function main() {
     // 9. Final balance check ──────────────────────────────────────────────────
     try {
       await sleep(5_000);
-      const finalTon  = await client.getBalance(escrowAddr);
+      const finalTon  = await withRetry(() => client.getBalance(escrowAddr));
       console.log(`\n  Final TON balance : ${Number(finalTon) / 1e9} TON`);
       if (escrowJettonWallet) {
         try {
-          const r2  = await client.runMethod(escrowJettonWallet, 'get_wallet_data', []);
+          await sleep(1000);
+          const r2  = await withRetry(() => client.runMethod(escrowJettonWallet, 'get_wallet_data', []));
           const bal = stackItemToBigInt(r2.stack.items[0]) ?? 0n;
           console.log(`  Final LADA balance: ${Number(bal) / 1e9} LADA`);
         } catch { /* uninit = 0 */ }
