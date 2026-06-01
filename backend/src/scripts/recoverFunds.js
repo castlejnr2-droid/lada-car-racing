@@ -283,6 +283,19 @@ async function main() {
     console.log(`  TON  → ${ownerAddr?.toString({ urlSafe: true, bounceable: false }) ?? '(owner)'}`);
     console.log('');
 
+    // 7. Top-up escrow gas if needed before WithdrawJettons ──────────────────
+    // WithdrawJettons requires the escrow to have ~0.15 TON for the outbound
+    // jetton transfer.  Re-read balance here (may differ from step 2 if this
+    // is a re-run after a previous partial recovery).
+    const tonBeforeWithdraw = await withRetry(() => client.getBalance(escrowAddr)).catch(() => tonBalance);
+    await sleep(1000);
+    if (ladaBalance > 0n && tonBeforeWithdraw < toNano('0.15')) {
+      console.log(`  Step 0/2 — TopUpGas: escrow only has ${Number(tonBeforeWithdraw) / 1e9} TON — sending 0.3 TON for gas`);
+      const topupBody = beginCell().endCell(); // empty body — plain TON transfer
+      await sendAndWait(signerContract, keyPair, escrowAddr, topupBody, '0.3', 'TopUpGas');
+      await sleep(1000);
+    }
+
     // 7. WithdrawJettons ───────────────────────────────────────────────────────
     if (ladaBalance > 0n) {
       console.log(`  Step 1/2 — WithdrawJettons: ${Number(ladaBalance) / 1e9} LADA`);
