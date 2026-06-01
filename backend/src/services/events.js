@@ -49,14 +49,36 @@ async function getOnChainRace(raceIdStr) {
       'raceOf',
       [{ type: 'int', value: BigInt(raceIdStr) }],
     );
-    const inner = result.stack.readTupleOpt();
-    if (!inner) return null;   // race not found on-chain
-    const stake      = inner.readBigNumber();
-    const player1    = inner.readAddress();
-    const player2    = inner.readAddress();
-    const deposited1 = inner.readBoolean();
-    const deposited2 = inner.readBoolean();
-    const state      = inner.readNumber();   // uint8: 0=AWAITING_DEPOSITS, 1=FUNDED
+
+    // @ton/ton@15.x + toncenter v2: readTupleOpt() returns a TupleReader whose
+    // .items are raw values produced by parseStackEntry — BigInt for integers,
+    // Cell for slices/cells — NOT the { type, value } TupleItem objects that
+    // readBigNumber() / readAddress() / readBoolean() expect.  Using those
+    // methods therefore throws "Not a number" even when the race exists.
+    // Fix: read the outer stack item directly and access .items ourselves.
+    const outerItem = result.stack.items[0];
+    if (!outerItem || outerItem.type === 'null') return null;   // race not on-chain
+    if (outerItem.type !== 'tuple') {
+      console.warn(`[events] getOnChainRace(${raceIdStr}): unexpected stack item type "${outerItem.type}"`);
+      return null;
+    }
+
+    const it = outerItem.items;   // [stake, p1Cell, p2Cell, dep1, dep2, state] — raw values
+    if (it.length < 6) return null;
+
+    // it[0] = stake   : BigInt (nanocoins)
+    // it[1] = player1 : Cell  (address slice)
+    // it[2] = player2 : Cell  (address slice)
+    // it[3] = dep1    : BigInt  (-1n = true, 0n = false)
+    // it[4] = dep2    : BigInt  (-1n = true, 0n = false)
+    // it[5] = state   : BigInt  (0n = AWAITING_DEPOSITS, 1n = FUNDED)
+    const stake      = it[0];
+    const player1    = it[1].beginParse().loadAddress();
+    const player2    = it[2].beginParse().loadAddress();
+    const deposited1 = it[3] !== 0n;
+    const deposited2 = it[4] !== 0n;
+    const state      = Number(it[5]);
+
     return {
       state,
       stake:      stake.toString(),
@@ -274,53 +296,59 @@ export async function handleDeposit(e) {
     // player, forwardPayload issue), so the on-chain and DB states can diverge.
     console.log(`[events.Deposit] ════════════ RACE STATE CHECK (before payout) ════════════`);
     const onChainRace = await getOnChainRace(race.on_chain_id);
+
     if (!onChainRace) {
-      console.error(`[events.Deposit] raceOf(${race.on_chain_id}) → null (race not on-chain; CreateRace may have failed)`);
-      console.error(`[events.Deposit] ✗ Skipping Payout — on-chain race not found`);
-    } else {
-      console.log(`[events.Deposit] raceOf(${race.on_chain_id}):`);
-      console.log(`[events.Deposit]   state     = ${onChainRace.state} (0=AWAITING_DEPOSITS 1=FUNDED)`);
-      console.log(`[events.Deposit]   stake     = ${onChainRace.stake}`);
-      console.log(`[events.Deposit]   player1   = ${onChainRace.player1}`);
-      console.log(`[events.Deposit]   player2   = ${onChainRace.player2}`);
-      console.log(`[events.Deposit]   deposited1= ${onChainRace.deposited1}`);
-      console.log(`[events.Deposit]   deposited2= ${onChainRace.deposited2}`);
-      if (onChainRace.state !== STATE_FUNDED) {
-        console.error(`[events.Deposit] ✗ state=${onChainRace.state} expected 1=FUNDED — Skipping Payout`);
-      } else {
-        console.log(`[events.Deposit] ✓ state=FUNDED — firing Payout op | winner=${winner}`);
-        payoutRace({
-          raceId: race.on_chain_id,
-          winner,
-        }).then(async () => {
-          console.log(`[events.Deposit] payoutRace TX sent for race=${race.id}`);
-          await query(
-            `UPDATE races
-                SET winner_payout = $2,
-                    house_fee     = $3
-              WHERE id = $1`,
-            [race.id, winnerPayout.toString(), houseFee.toString()],
-          );
-          // Re-check on-chain state ~3 s after sending, so we can see if the
-          // escrow accepted or bounced the Payout op.
-          await new Promise((r) => setTimeout(r, 3000));
-          console.log(`[events.Deposit] ════════════ RACE STATE CHECK (after payout) ════════════`);
-          const afterRace = await getOnChainRace(race.on_chain_id);
-          if (!afterRace) {
-            console.log(`[events.Deposit] raceOf(${race.on_chain_id}) → null (race may have been settled+cleaned up)`);
-          } else {
-            console.log(`[events.Deposit] raceOf(${race.on_chain_id}) after payout TX:`);
-            console.log(`[events.Deposit]   state     = ${afterRace.state} (0=AWAITING_DEPOSITS 1=FUNDED)`);
-            console.log(`[events.Deposit]   stake     = ${afterRace.stake}`);
-            console.log(`[events.Deposit]   deposited1= ${afterRace.deposited1}`);
-            console.log(`[events.Deposit]   deposited2= ${afterRace.deposited2}`);
-          }
-        }).catch((err) => {
-          console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
-          console.error(`[events.Deposit] admin can retry: on_chain_id=${race.on_chain_id} winner=${winner}`);
-        });
-      }
+      console.error(`[events.Deposit] raceOf(${race.on_chain_id}) → null (race not on-chain; CreateRace may not be confirmed yet)`);
+      console.error(`[events.Deposit] ✗ Aborting Payout — on-chain race not found`);
+      console.log(`[events.Deposit] ═══════════════════════════════════════════════════════════`);
+      return { ok: false, reason: 'race_not_on_chain' };
     }
+
+    console.log(`[events.Deposit] raceOf(${race.on_chain_id}):`);
+    console.log(`[events.Deposit]   state     = ${onChainRace.state} (0=AWAITING_DEPOSITS 1=FUNDED)`);
+    console.log(`[events.Deposit]   stake     = ${onChainRace.stake}`);
+    console.log(`[events.Deposit]   player1   = ${onChainRace.player1}`);
+    console.log(`[events.Deposit]   player2   = ${onChainRace.player2}`);
+    console.log(`[events.Deposit]   deposited1= ${onChainRace.deposited1}`);
+    console.log(`[events.Deposit]   deposited2= ${onChainRace.deposited2}`);
+
+    if (onChainRace.state !== STATE_FUNDED) {
+      console.error(`[events.Deposit] ✗ state=${onChainRace.state} expected 1=FUNDED — Aborting Payout`);
+      console.log(`[events.Deposit] ═══════════════════════════════════════════════════════════`);
+      return { ok: false, reason: 'race_not_funded' };
+    }
+
+    console.log(`[events.Deposit] ✓ state=FUNDED — firing Payout op | winner=${winner}`);
+    payoutRace({
+      raceId: race.on_chain_id,
+      winner,
+    }).then(async () => {
+      console.log(`[events.Deposit] payoutRace TX sent for race=${race.id}`);
+      await query(
+        `UPDATE races
+            SET winner_payout = $2,
+                house_fee     = $3
+          WHERE id = $1`,
+        [race.id, winnerPayout.toString(), houseFee.toString()],
+      );
+      // Re-check on-chain state ~3 s after sending, so we can see if the
+      // escrow accepted or bounced the Payout op.
+      await new Promise((r) => setTimeout(r, 3000));
+      console.log(`[events.Deposit] ════════════ RACE STATE CHECK (after payout) ════════════`);
+      const afterRace = await getOnChainRace(race.on_chain_id);
+      if (!afterRace) {
+        console.log(`[events.Deposit] raceOf(${race.on_chain_id}) → null (race settled+cleaned up ✓)`);
+      } else {
+        console.log(`[events.Deposit] raceOf(${race.on_chain_id}) after payout TX:`);
+        console.log(`[events.Deposit]   state     = ${afterRace.state} (0=AWAITING_DEPOSITS 1=FUNDED)`);
+        console.log(`[events.Deposit]   stake     = ${afterRace.stake}`);
+        console.log(`[events.Deposit]   deposited1= ${afterRace.deposited1}`);
+        console.log(`[events.Deposit]   deposited2= ${afterRace.deposited2}`);
+      }
+    }).catch((err) => {
+      console.error(`[events.Deposit] payoutRace FAILED for race=${race.id}:`, err.message);
+      console.error(`[events.Deposit] admin can retry: on_chain_id=${race.on_chain_id} winner=${winner}`);
+    });
     console.log(`[events.Deposit] ═══════════════════════════════════════════════════════════`);
   } else if (newP1dep || newP2dep) {
     console.log(`[events.Deposit] one deposit in, waiting for other (p1=${newP1dep} p2=${newP2dep})`);

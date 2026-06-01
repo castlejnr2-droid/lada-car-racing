@@ -70,7 +70,7 @@ async function getHouseWallet() {
   return { wallet: _wallet, keyPair: _keyPair };
 }
 
-async function sendToEscrow({ body, value, label }) {
+async function sendToEscrow({ body, value, label, waitForConfirmation = false }) {
   const escrow = config.ton.escrowAddress;
   if (!escrow) throw new Error('[housePayout] ESCROW_CONTRACT_ADDRESS is not configured');
 
@@ -109,6 +109,33 @@ async function sendToEscrow({ body, value, label }) {
   }
 
   console.log(`[housePayout] ${label} sent OK | seqno=${seqno}`);
+
+  if (waitForConfirmation) {
+    // Poll until house-wallet seqno advances — that means the TX was included in a block
+    // and the CreateRace message has been forwarded to the escrow contract.
+    // Allow up to 30 s; typical TON confirmation is 5–10 s.
+    console.log(`[housePayout] ${label} waiting for on-chain confirmation …`);
+    const deadline = Date.now() + 30_000;
+    let confirmed = false;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3_000));
+      try {
+        const newSeqno = await contract.getSeqno();
+        if (newSeqno > seqno) {
+          console.log(`[housePayout] ${label} confirmed | seqno ${seqno}→${newSeqno}`);
+          confirmed = true;
+          break;
+        }
+      } catch {
+        // ignore transient network errors — keep polling
+      }
+    }
+    if (!confirmed) {
+      console.warn(`[housePayout] ${label} confirmation timed out after 30 s — proceeding anyway`);
+    }
+    // Extra wait for the escrow to process the inbound message (~1 block)
+    await new Promise((r) => setTimeout(r, 5_000));
+  }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -142,7 +169,7 @@ export async function createRaceOnChain({ raceId, stake, player1, player2 }) {
     .storeAddress(p2Addr)
     .endCell();
 
-  await sendToEscrow({ body, value: '0.05', label: `CreateRace(${raceIdBigInt})` });
+  await sendToEscrow({ body, value: '0.05', label: `CreateRace(${raceIdBigInt})`, waitForConfirmation: true });
 }
 
 /**

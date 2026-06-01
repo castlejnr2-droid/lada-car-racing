@@ -88,19 +88,23 @@ router.post('/', async (req, res, next) => {
     const stakeBigInt = BigInt(stake);
     const pot = stakeBigInt * 2n;   // for 2-player race
 
-    // Register race on-chain (async — we proceed even if this fails; indexer will retry)
-    createRaceOnChain({
-      raceId: onChainId.toString(),
-      stake: stake,
-      player1: creator,
-      player2: houseWallet,
-    }).then(() => {
-      console.log(`[lobbies] CreateRace sent for lobby=${lobby.id} onChainId=${onChainId}`);
-    }).catch((err) => {
+    // Register race on-chain and wait for confirmation before marking the race as
+    // ready for deposits.  Without this wait, a player can deposit before the escrow
+    // knows about the race, causing it to reject the transfer.
+    try {
+      await createRaceOnChain({
+        raceId: onChainId.toString(),
+        stake:   stake,
+        player1: creator,
+        player2: houseWallet,
+      });
+      console.log(`[lobbies] CreateRace confirmed for lobby=${lobby.id} onChainId=${onChainId}`);
+    } catch (err) {
       console.error(`[lobbies] CreateRace FAILED for lobby=${lobby.id}:`, err.message);
-    });
+      return res.status(500).json({ error: 'Failed to register race on-chain: ' + err.message });
+    }
 
-    // Insert race row immediately so the frontend can poll it
+    // Insert race row only after CreateRace is confirmed so deposits can't race ahead
     const raceInsert = await query(
       `INSERT INTO races (id, lobby_id, on_chain_id, player1, player2, stake, pot, state)
        VALUES ($1, $1, $2, $3, $4, $5, $6, 'awaiting_deposits')
