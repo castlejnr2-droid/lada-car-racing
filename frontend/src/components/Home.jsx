@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useTonAddress } from '@tonconnect/ui-react';
+import { useTonAddress, useTonConnectUI } from '@tonconnect/ui-react';
 import { tg, haptic, tgUser } from '../lib/telegram.js';
 import { upsertPlayer } from '../api/players.js';
 import { getLadaBalance } from '../blockchain/jetton.js';
@@ -17,6 +17,7 @@ export default function Home() {
   const [tab, setTab] = useState('play');
   const [balance, setBalance] = useState(null);  // BigInt nano-LADA or null
   const address = useTonAddress();
+  const [tonConnectUI] = useTonConnectUI();
 
   // Once a wallet is connected, upsert the player in the backend so the
   // Telegram → wallet link exists by the time the user hits /stats.
@@ -60,6 +61,23 @@ export default function Home() {
             <div style={{ fontSize: 11, color: 'var(--accent-2)', fontWeight: 'bold' }}>
               💰 {Number(balance / 1_000_000_000n).toLocaleString()} LADA
             </div>
+          )}
+          {address && (
+            <button
+              onClick={() => { haptic.select(); tonConnectUI.disconnect(); }}
+              style={{
+                fontSize: 10,
+                color: 'var(--fg-muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                cursor: 'pointer',
+                marginTop: 2,
+                padding: 0,
+                opacity: 0.7,
+              }}
+            >
+              disconnect
+            </button>
           )}
         </div>
       </header>

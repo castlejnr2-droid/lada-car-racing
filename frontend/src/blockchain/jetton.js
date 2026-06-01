@@ -8,7 +8,7 @@
  *
  * Primary: Toncenter v2 runGetMethod.  Fallback: TonAPI v2 REST.
  */
-import { Address, beginCell, toNano } from '@ton/core';
+import { Address, Cell, beginCell, toNano } from '@ton/core';
 
 const JETTON_TRANSFER_OP = 0x0f8a7ea5;
 
@@ -212,6 +212,12 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   const userJettonWallet = await getUserJettonWallet(owner);
   if (!userJettonWallet) throw new Error('You have no Lada jetton wallet yet — buy some LADA first.');
 
+  // TonConnect requires user-friendly bounceable format (EQ…).
+  // getUserJettonWallet may return a raw address (0:…) from TonAPI or a
+  // non-urlSafe string from @ton/core .toString() — normalise here.
+  const userJettonWalletAddr = Address.parse(userJettonWallet)
+    .toString({ urlSafe: true, bounceable: true });
+
   const raceIdBigInt = BigInt(raceIdOnChain);   // on_chain_id is a string from the API
 
   // forward_payload: uint64 raceId stored INLINE — no reference cell, no Either bit.
@@ -229,12 +235,12 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   // encoding inline with Either=0 is safer and matches the contract's expectation.
 
   console.log('[jetton] buildDeposit ─────────────────────────────');
-  console.log('[jetton]   owner          :', owner);
-  console.log('[jetton]   amount (nano)  :', amount.toString());
-  console.log('[jetton]   raceIdOnChain  :', raceIdOnChain, '→ BigInt:', raceIdBigInt.toString());
-  console.log('[jetton]   ESCROW_ADDRESS :', ESCROW_ADDRESS);
-  console.log('[jetton]   userJettonWallet:', userJettonWallet);
-  console.log('[jetton]   forward_payload : Either=0 inline storeUint(raceId, 64)');
+  console.log('[jetton]   owner              :', owner);
+  console.log('[jetton]   amount (nano)      :', amount.toString());
+  console.log('[jetton]   raceIdOnChain      :', raceIdOnChain, '→ BigInt:', raceIdBigInt.toString());
+  console.log('[jetton]   ESCROW_ADDRESS     :', ESCROW_ADDRESS);
+  console.log('[jetton]   userJettonWallet   :', userJettonWallet, '→', userJettonWalletAddr);
+  console.log('[jetton]   forward_payload    : Either=0 inline storeUint(raceId, 64)');
 
   const body = beginCell()
     .storeUint(JETTON_TRANSFER_OP, 32)            // 0x0f8a7ea5
@@ -254,7 +260,7 @@ export async function buildDeposit({ owner, amount, raceIdOnChain }) {
   return {
     validUntil: Math.floor(Date.now() / 1000) + 360,
     messages: [{
-      address: userJettonWallet,
+      address: userJettonWalletAddr,
       amount: toNano('0.1').toString(),
       payload: bocBase64,
     }],
