@@ -289,23 +289,23 @@ async function main() {
     // is a re-run after a previous partial recovery).
     const tonBeforeWithdraw = await withRetry(() => client.getBalance(escrowAddr)).catch(() => tonBalance);
     await sleep(1000);
-    if (ladaBalance > 0n && tonBeforeWithdraw < toNano('0.15')) {
-      console.log(`  Step 0/2 — TopUpGas: escrow only has ${Number(tonBeforeWithdraw) / 1e9} TON — sending 0.3 TON for gas`);
+    if (ladaBalance > 0n && tonBeforeWithdraw < toNano('0.25')) {
+      console.log(`  Step 0/2 — TopUpGas: escrow only has ${Number(tonBeforeWithdraw) / 1e9} TON — sending 0.5 TON for gas`);
       const topupBody = beginCell().endCell(); // empty body — plain TON transfer
-      await sendAndWait(signerContract, keyPair, escrowAddr, topupBody, '0.3', 'TopUpGas');
+      await sendAndWait(signerContract, keyPair, escrowAddr, topupBody, '0.5', 'TopUpGas');
       await sleep(1000);
     }
 
     // 7. WithdrawJettons ───────────────────────────────────────────────────────
     if (ladaBalance > 0n) {
       console.log(`  Step 1/2 — WithdrawJettons: ${Number(ladaBalance) / 1e9} LADA`);
-      // 0.2 TON: escrow needs ~0.1 for the outbound jetton transfer + gas
+      // 0.3 TON: escrow needs ~0.15+ for outbound jetton transfer + gas
       const body = beginCell()
         .storeUint(OP_WITHDRAW_JETTONS, 32)
         .storeCoins(ladaBalance)
         .storeAddress(ladaDestination)
         .endCell();
-      await sendAndWait(signerContract, keyPair, escrowAddr, body, '0.2', 'WithdrawJettons');
+      await sendAndWait(signerContract, keyPair, escrowAddr, body, '0.3', 'WithdrawJettons');
     } else {
       console.log(`  Step 1/2 — WithdrawJettons: skipped (no LADA balance)`);
     }
