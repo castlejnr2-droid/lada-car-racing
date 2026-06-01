@@ -33,10 +33,14 @@ const HOUSE_FEE_BPS: Int = 500;            // 5%  stays in contract
 const BPS_DENOMINATOR: Int = 10000;
 
 // ───── TON gas budget for outbound jetton transfers ─────────────────
-const JETTON_FORWARD_TON: Int = ton("0.1");   // 0.1 TON required: jetton wallet needs
-                                               // ~0.04 for computation + 0.01 notify +
-                                               // return excess; 0.05 was insufficient.
-const JETTON_NOTIFY_TON: Int = ton("0.01");
+// JETTON_FORWARD_TON: total TON attached to the transfer message sent to
+//   our jetton wallet.  Must cover: jetton wallet compute (~0.04) +
+//   forwardTonAmount (0.1) + return-excess gas.  0.2 TON is safe.
+const JETTON_FORWARD_TON: Int = ton("0.2");
+// JETTON_NOTIFY_TON: forwarded to the *recipient's* jetton wallet as the
+//   TokenNotification value.  Must be enough to initialize an uninitialised
+//   jetton wallet (~0.05–0.1 TON).  0.1 TON covers cold-wallet creation.
+const JETTON_NOTIFY_TON: Int = ton("0.1");
 
 // ───── Race states ──────────────────────────────────────────────────
 const STATE_AWAITING_DEPOSITS: Int = 0;    // waiting for both deposits
@@ -349,7 +353,11 @@ contract LadaEscrow with Deployable {
                 responseDestination: to,
                 customPayload: null,
                 forwardTonAmount: JETTON_NOTIFY_TON,
-                forwardPayload: emptySlice()
+                // Either discriminant bit = 0 (inline, no payload).
+                // The LADA jetton wallet (jetton_wallet_v1) requires >= 1 bit
+                // in the forwardPayload slice (exit 708 otherwise).
+                // emptySlice() = 0 bits and always caused exit code 708.
+                forwardPayload: beginCell().storeBit(false).endCell().beginParse()
             }.toCell()
         });
     }

@@ -1,6 +1,6 @@
 # Tact compilation report
 Contract: LadaEscrow
-BoC Size: 1940 bytes
+BoC Size: 1945 bytes
 
 ## Structures (Structs and Messages)
 Total structures: 25

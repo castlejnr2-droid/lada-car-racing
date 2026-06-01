@@ -299,11 +299,15 @@ PROGRAM{
   $TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload PROCINLINE:<{
   }>
   $LadaEscrow$_fun_sendJetton PROCREF:<{
-    100000000 PUSHINT
+    200000000 PUSHINT
     1 PUSHINT
     PUSHNULL
-    10000000 PUSHINT
-        b{} PUSHSLICE
+    100000000 PUSHINT
+    FALSE
+        NEWC
+        1 STI
+        ENDC
+        CTOS
     s7 PUSH
     s5 s7 XCHG
     s0 s4 XCHG

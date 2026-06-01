@@ -23,7 +23,7 @@
  */
 
 import 'dotenv/config';
-import { Address, beginCell, toNano, internal } from '@ton/core';
+import { Address, beginCell, toNano, internal, Cell } from '@ton/core';
 import { TonClient, WalletContractV4, WalletContractV5R1 } from '@ton/ton';
 import { mnemonicToPrivateKey } from '@ton/crypto';
 
@@ -46,7 +46,11 @@ const ESCROW_CONTRACTS = [
 ];
 
 // LadaEscrow op codes
-const OP_WITHDRAW_JETTONS = 0x6c726306;
+const OP_WITHDRAW_JETTONS  = 0x6c726306;
+const OP_SET_JETTON_WALLET = 0x6c726307;
+
+// LADA jetton master (same address used by the frontend)
+const LADA_MASTER = 'EQBjNisz_m-sdA9TcosQMmugdhl6hDjGcCMgQFa85p_8jx7p';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -238,15 +242,50 @@ async function main() {
       console.warn(`  ⚠ jettonWalletAddress() getter failed: ${e.message}`);
     }
     if (escrowJettonWallet) {
-      console.log(`  LADA wallet : ${escrowJettonWallet.toString({ urlSafe: true, bounceable: true })}`);
+      console.log(`  LADA wallet : ${escrowJettonWallet.toString({ urlSafe: true, bounceable: true })} (stored)`);
     }
     await sleep(1000);
 
-    // 5. LADA balance ─────────────────────────────────────────────────────────
+    // 4b. Verify stored jetton wallet matches the LADA master's authoritative derivation.
+    //
+    // Pattern seen in fixEscrowJettonWallet.js: the escrow can be deployed (or later patched)
+    // with a wrong ladaJettonWallet.  If self.ladaJettonWallet is not owned by this escrow,
+    // the jetton wallet rejects the TokenTransfer sent by sendJetton() → "Send token Failed".
+    // Fix: query the master for get_wallet_address(escrow) and call SetJettonWallet if it differs.
+    let verifiedJettonWallet = escrowJettonWallet;
+    try {
+      const ladaMasterAddr = Address.parse(LADA_MASTER);
+      const escrowSliceCell = beginCell().storeAddress(escrowAddr).endCell();
+      const mR = await withRetry(() => client.runMethod(ladaMasterAddr, 'get_wallet_address', [
+        { type: 'slice', cell: escrowSliceCell },
+      ]));
+      await sleep(1000);
+      const masterDerived = stackItemToAddress(mR.stack.items[0]);
+      if (masterDerived) {
+        console.log(`  LADA wallet : ${masterDerived.toString({ urlSafe: true, bounceable: true })} (master-derived)`);
+        if (!escrowJettonWallet || masterDerived.toRawString() !== escrowJettonWallet.toRawString()) {
+          console.log(`  ⚠ MISMATCH — stored wallet is wrong; sending SetJettonWallet to fix…`);
+          const fixBody = beginCell()
+            .storeUint(OP_SET_JETTON_WALLET, 32)
+            .storeAddress(masterDerived)
+            .endCell();
+          await sendAndWait(signerContract, keyPair, escrowAddr, fixBody, '0.05', 'SetJettonWallet');
+          await sleep(1000);
+        } else {
+          console.log(`  ✓ Stored wallet matches master derivation`);
+        }
+        verifiedJettonWallet = masterDerived;
+      }
+    } catch (e) {
+      console.warn(`  ⚠ get_wallet_address check failed: ${e.message} — using stored wallet`);
+    }
+    await sleep(1000);
+
+    // 5. LADA balance — read from the master-verified wallet ─────────────────
     let ladaBalance = 0n;
-    if (escrowJettonWallet) {
+    if (verifiedJettonWallet) {
       try {
-        const r = await withRetry(() => client.runMethod(escrowJettonWallet, 'get_wallet_data', []));
+        const r = await withRetry(() => client.runMethod(verifiedJettonWallet, 'get_wallet_data', []));
         // Standard jetton wallet: first stack item is balance (int)
         const balItem = r.stack.items[0];
         ladaBalance = stackItemToBigInt(balItem) ?? 0n;
@@ -289,23 +328,25 @@ async function main() {
     // is a re-run after a previous partial recovery).
     const tonBeforeWithdraw = await withRetry(() => client.getBalance(escrowAddr)).catch(() => tonBalance);
     await sleep(1000);
-    if (ladaBalance > 0n && tonBeforeWithdraw < toNano('0.25')) {
-      console.log(`  Step 0/2 — TopUpGas: escrow only has ${Number(tonBeforeWithdraw) / 1e9} TON — sending 0.5 TON for gas`);
+    if (ladaBalance > 0n && tonBeforeWithdraw < toNano('0.5')) {
+      console.log(`  Step 0/2 — TopUpGas: escrow only has ${Number(tonBeforeWithdraw) / 1e9} TON — sending 1 TON for gas`);
       const topupBody = beginCell().endCell(); // empty body — plain TON transfer
-      await sendAndWait(signerContract, keyPair, escrowAddr, topupBody, '0.5', 'TopUpGas');
+      await sendAndWait(signerContract, keyPair, escrowAddr, topupBody, '1', 'TopUpGas');
       await sleep(1000);
     }
 
     // 7. WithdrawJettons ───────────────────────────────────────────────────────
     if (ladaBalance > 0n) {
       console.log(`  Step 1/2 — WithdrawJettons: ${Number(ladaBalance) / 1e9} LADA`);
-      // 0.3 TON: escrow needs ~0.15+ for outbound jetton transfer + gas
+      // 0.5 TON attached: escrow's sendJetton uses 0.1 TON (JETTON_FORWARD_TON, hardcoded)
+      // for the outbound transfer. Extra TON here ensures the escrow has headroom and the
+      // jetton wallet can fund deployment of the destination's jetton wallet if uninitialised.
       const body = beginCell()
         .storeUint(OP_WITHDRAW_JETTONS, 32)
         .storeCoins(ladaBalance)
         .storeAddress(ladaDestination)
         .endCell();
-      await sendAndWait(signerContract, keyPair, escrowAddr, body, '0.3', 'WithdrawJettons');
+      await sendAndWait(signerContract, keyPair, escrowAddr, body, '0.5', 'WithdrawJettons');
     } else {
       console.log(`  Step 1/2 — WithdrawJettons: skipped (no LADA balance)`);
     }
@@ -333,10 +374,10 @@ async function main() {
       await sleep(5_000);
       const finalTon  = await withRetry(() => client.getBalance(escrowAddr));
       console.log(`\n  Final TON balance : ${Number(finalTon) / 1e9} TON`);
-      if (escrowJettonWallet) {
+      if (verifiedJettonWallet) {
         try {
           await sleep(1000);
-          const r2  = await withRetry(() => client.runMethod(escrowJettonWallet, 'get_wallet_data', []));
+          const r2  = await withRetry(() => client.runMethod(verifiedJettonWallet, 'get_wallet_data', []));
           const bal = stackItemToBigInt(r2.stack.items[0]) ?? 0n;
           console.log(`  Final LADA balance: ${Number(bal) / 1e9} LADA`);
         } catch { /* uninit = 0 */ }

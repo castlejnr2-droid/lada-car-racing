@@ -187,10 +187,6 @@ cell $global_emptyCell() impure asm """
     <b b> PUSHREF // Pure Fift: "<b" creates a builder, "b>" turns it into a cell at compile time
 """;
 
-slice $global_emptySlice() impure asm """
-    b{} PUSHSLICE
-""";
-
 int $global_myBalance() impure asm """
     BALANCE FIRST
 """;
@@ -311,8 +307,16 @@ builder $Builder$_fun_storeRef(cell $cell, builder $self) impure asm """
     $global_sendRawMessage($c, 0);
 }
 
+builder $Builder$_fun_storeBit(int $value, builder $self) impure asm """
+    1 STI
+""";
+
 int $Slice$_fun_bits(slice $self) impure asm """
     SBITS
+""";
+
+slice $Cell$_fun_beginParse(cell $self) impure asm """
+    CTOS
 """;
 
 ((slice, slice, slice, cell), ()) $LadaEscrow$_fun_notify((slice, slice, slice, cell) $self, cell $body) impure inline {
@@ -597,7 +601,7 @@ builder $LadaEscrow$_store(builder build_0, (slice, slice, slice, cell) v) inlin
 
 ((slice, slice, slice, cell), ()) $LadaEscrow$_fun_sendJetton((slice, slice, slice, cell) $self, slice $to, int $amount, int $queryId) impure inline_ref {
     var (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races)) = $self;
-    $global_send($SendParameters$_constructor_to_value_mode_body($self'ladaJettonWallet, 100000000, 1, $TokenTransfer$_store_cell($TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload($queryId, $amount, $to, $to, null(), 10000000, $global_emptySlice()), begin_cell())));
+    $global_send($SendParameters$_constructor_to_value_mode_body($self'ladaJettonWallet, 200000000, 1, $TokenTransfer$_store_cell($TokenTransfer$_constructor_queryId_amount_destination_responseDestination_customPayload_forwardTonAmount_forwardPayload($queryId, $amount, $to, $to, null(), 100000000, $Cell$_fun_beginParse($Builder$_fun_endCell($Builder$_fun_storeBit(false, $global_beginCell())))), begin_cell())));
     return (($self'owner, $self'houseWallet, $self'ladaJettonWallet, $self'races), ());
 }
 

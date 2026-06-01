@@ -24,7 +24,7 @@ const TONAPI_BASE = NETWORK === 'mainnet'
 const LADA_MASTER    = import.meta.env.VITE_LADA_JETTON_MASTER
   || 'EQBjNisz_m-sdA9TcosQMmugdhl6hDjGcCMgQFa85p_8jx7p';
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_CONTRACT_ADDRESS
-  || 'EQDjkkULU_3fxlbrR_kSVsogIi9ifxJ44aWoNHT1zr5ZVLPZ';
+  || 'EQAGSH3bcf6A8RKnhbjwSvPT_NGiquLx4-bHVAc-zBXBo0JF';
 
 // ─── Toncenter helpers ────────────────────────────────────────────────────────
 
