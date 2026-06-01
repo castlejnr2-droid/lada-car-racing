@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import { Router } from 'express';
 import { query } from '../db/pool.js';
 import { createRaceOnChain, setPlayer2OnChain, refundRace } from '../services/housePayout.js';
@@ -84,7 +85,12 @@ router.post('/', async (req, res, next) => {
       [houseWallet],
     );
 
-    const onChainId = BigInt(Date.now());
+    // Random uint32 raceId — fits in every layer of the stack:
+    //   contract (map<Int as uint64>), TonCenter runMethod (32-bit stack param),
+    //   forwardPayload storeUint(id, 64), DB BIGINT.
+    // Date.now() (~1.78 trillion in 2026) overflows uint32 and causes
+    // raceOf() to return null, aborting payout.
+    const onChainId = BigInt(randomInt(1, 0xFFFFFFFF));
     const stakeBigInt = BigInt(stake);
     const pot = stakeBigInt * 2n;   // for 2-player race
 
