@@ -120,8 +120,10 @@ function parseTokenNotification(b64) {
 
 /**
  * Parse a WinnerDeclared event body.
- * Layout: op(32) raceId(64) winner(addr) loser(addr) combinedSeed(256)
- *         pot(coins) payout(coins) houseFee(coins)
+ * Tact cell layout (compiled): pot is stored inline in the main cell;
+ * payout + houseFee overflow into a reference cell (ref 0).
+ *   main cell: op(32) raceId(64) winner(addr) loser(addr) combinedSeed(256) pot(coins)
+ *   ref  cell: payout(coins) houseFee(coins)
  */
 function parseWinnerDeclared(b64) {
   const s = Cell.fromBase64(b64).beginParse();
@@ -133,20 +135,18 @@ function parseWinnerDeclared(b64) {
 
   let pot = 0n, payout = 0n, houseFee = 0n;
   try {
-    pot      = s.loadCoins();
-    payout   = s.loadCoins();
-    houseFee = s.loadCoins();
-  } catch {
-    try {
-      if (s.remainingRefs > 0) {
-        const r = s.loadRef().beginParse();
-        pot      = r.loadCoins();
-        payout   = r.loadCoins();
-        houseFee = r.loadCoins();
-      }
-    } catch (e2) {
-      console.warn('[indexer] parseWinnerDeclared: coin fields incomplete:', e2.message);
+    pot = s.loadCoins();
+    // Tact overflows payout+houseFee into a ref cell when the main cell is full
+    if (s.remainingRefs > 0) {
+      const r = s.loadRef().beginParse();
+      payout   = r.loadCoins();
+      houseFee = r.loadCoins();
+    } else {
+      payout   = s.loadCoins();
+      houseFee = s.loadCoins();
     }
+  } catch (e) {
+    console.warn('[indexer] parseWinnerDeclared: coin fields incomplete:', e.message);
   }
 
   return {

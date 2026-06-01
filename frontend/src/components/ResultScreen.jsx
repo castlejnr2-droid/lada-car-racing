@@ -6,6 +6,12 @@ export default function ResultScreen({ race, myAddress, refunded, onDone }) {
   const won = !refunded && race.winner === myAddress;
   const lost = !refunded && race.loser  === myAddress;
 
+  // Compute payout from pot - house_fee (contract definition: winner gets pot minus house cut).
+  // winner_payout in the DB was parsed incorrectly before the indexer fix, so derive it here.
+  const pot      = BigInt(race.pot      || 0);
+  const houseFee = BigInt(race.house_fee || 0);
+  const payout   = pot - houseFee;
+
   useEffect(() => {
     if (won)  haptic.success();
     else if (lost) haptic.error();
@@ -31,11 +37,11 @@ export default function ResultScreen({ race, myAddress, refunded, onDone }) {
         {won ? 'Pobeda!' : 'Pothole claimed you'}
       </div>
       <div className="result__amount">
-        {won ? `+${formatLada(race.winner_payout)} LADA` : `-${formatLada(race.stake)} LADA`}
+        {won ? `+${formatLada(payout)} LADA` : `-${formatLada(race.stake)} LADA`}
       </div>
       <p style={{ color: 'var(--fg-muted)', textAlign: 'center', marginTop: 8 }}>
         Winner: <b>{race.winner_username || shortAddress(race.winner)}</b><br/>
-        Pot: {formatLada(race.pot)} LADA · house took {formatLada(race.house_fee)} LADA
+        Pot: {formatLada(pot)} LADA · house took {formatLada(houseFee)} LADA
       </p>
     </div>
   );
