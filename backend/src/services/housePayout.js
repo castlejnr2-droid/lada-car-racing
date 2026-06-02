@@ -169,7 +169,7 @@ export async function createRaceOnChain({ raceId, stake, player1, player2 }) {
     .storeAddress(p2Addr)
     .endCell();
 
-  await sendToEscrow({ body, value: '0.05', label: `CreateRace(${raceIdBigInt})`, waitForConfirmation: true });
+  await sendToEscrow({ body, value: '0.03', label: `CreateRace(${raceIdBigInt})`, waitForConfirmation: true });
 }
 
 /**
@@ -202,8 +202,8 @@ export async function payoutRace({ raceId, winner }) {
     .storeUint(0n, 256)   // seed
     .endCell();
 
-  // 0.2 TON: escrow needs ~0.1 for the outbound jetton transfer + gas
-  await sendToEscrow({ body, value: '0.2', label: `Payout(race=${raceIdBigInt}, winner=${winner})` });
+  // 0.05 TON: covers escrow computation + outbound jetton transfer gas
+  await sendToEscrow({ body, value: '0.05', label: `Payout(race=${raceIdBigInt}, winner=${winner})` });
 }
 
 /**
@@ -243,7 +243,7 @@ export async function setPlayer2OnChain({ raceId, player2 }) {
     .storeAddress(p2Addr)
     .endCell();
 
-  await sendToEscrow({ body, value: '0.05', label: `SetPlayer2(${raceIdBigInt}, p2=${player2})`, waitForConfirmation: true });
+  await sendToEscrow({ body, value: '0.03', label: `SetPlayer2(${raceIdBigInt}, p2=${player2})`, waitForConfirmation: true });
 }
 
 /**
