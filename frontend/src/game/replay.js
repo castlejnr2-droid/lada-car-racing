@@ -354,21 +354,28 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                i === winnerIdx && flashOn);
     }
 
-    // Player name above car — bold white with drop shadow for legibility
+    // Player name above car — bold white with drop shadow for legibility.
+    // Font is capped so labels never overflow on narrow mobile screens.
     const name = playerNames[i];
     if (name) {
-      const label = name.length > 12 ? name.slice(0, 12) : name;
-      const fontSize = Math.max(12, Math.round(CAR_H * 0.52));
-      const nameY = carY - CAR_H * 1.05;
+      const fontSize = Math.min(13, Math.max(9, Math.round(CAR_H * 0.30)));
+      const maxLabelW = CAR_W * 1.1;   // never wider than the car
+      const nameY = carY - CAR_H * 1.0;
       ctx.save();
       ctx.font = `bold ${fontSize}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       ctx.shadowColor = 'rgba(0,0,0,0.95)';
-      ctx.shadowBlur = 6;
+      ctx.shadowBlur = 5;
       ctx.shadowOffsetX = 1;
-      ctx.shadowOffsetY = 2;
+      ctx.shadowOffsetY = 1;
       ctx.fillStyle = '#ffffff';
+      // Truncate with ellipsis if the text would exceed maxLabelW
+      let label = name;
+      while (label.length > 1 && ctx.measureText(label).width > maxLabelW) {
+        label = label.slice(0, -1);
+      }
+      if (label.length < name.length) label = label.slice(0, -1) + '…';
       ctx.fillText(label, carX[i], nameY);
       ctx.restore();
     }
@@ -955,7 +962,8 @@ function drawCarSprite(ctx, sprite, cx, cy, CW, CH, carIdx, speed, hit, flashOn)
   }
 
   // Car 0: normal. Car 1: strong blue shift so players can tell them apart instantly.
-  if (carIdx === 1) ctx.filter = 'hue-rotate(200deg) saturate(1.4) brightness(1.1)';
+  // Car 1 gets a strong red tint — sepia first to desaturate, then heavy red hue.
+  if (carIdx === 1) ctx.filter = 'sepia(1) saturate(4) hue-rotate(320deg) brightness(0.95)';
   ctx.drawImage(sprite, x, y, w, h);
   ctx.filter = 'none';
 
