@@ -48,7 +48,7 @@ function loadCarSprite(src) {
       }
       const bgColors = [...bgMap.values()];
 
-      // Make pixels that closely match any background tile transparent.
+      // Pass 1 — remove checkerboard tiles.
       for (let i = 0; i < d.length; i += 4) {
         for (const [br, bg, bb] of bgColors) {
           if (Math.abs(d[i] - br) + Math.abs(d[i+1] - bg) + Math.abs(d[i+2] - bb) < 55) {
@@ -56,6 +56,10 @@ function loadCarSprite(src) {
             break;
           }
         }
+      }
+      // Pass 2 — remove the white sticker border (all channels > 240).
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 240 && d[i+1] > 240 && d[i+2] > 240) d[i + 3] = 0;
       }
       octx.putImageData(imageData, 0, 0);
       resolve(oc);
