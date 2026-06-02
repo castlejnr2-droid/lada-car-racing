@@ -139,9 +139,9 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   let cancelled  = false;
   let rafId      = null;
 
-  // Sprite: load the pixel-art Lada image; fall back to canvas drawing until ready.
+  // Sprite: wait for the image to load before starting the animation loop so
+  // the canvas-drawn fallback never flashes on screen.
   let carSprite = null;
-  loadCarSprite('/lada1.jpg').then((s) => { carSprite = s; });
 
   const endStartX = new Array(N).fill(0);
 
@@ -269,7 +269,13 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     rafId = requestAnimationFrame(loop);
   }
 
-  rafId = requestAnimationFrame(loop);
+  // Only kick off the loop once the sprite is fully decoded — no fallback flash.
+  loadCarSprite('/lada1.jpg').then((s) => {
+    if (cancelled) return;
+    carSprite = s;
+    rafId = requestAnimationFrame(loop);
+  });
+
   return () => { cancelled = true; if (rafId) cancelAnimationFrame(rafId); };
 }
 
