@@ -22,36 +22,63 @@ import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── sprite loader ────────────────────────────────────────────────────────────
 // Loads the pixel-art Lada JPG and colour-keys out the checkerboard background.
-// Samples the top-left corner to detect both tile colours, then makes matching
-// pixels transparent. No near-white stripping (that caused a halo artifact).
+// Samples all four corners to reliably detect both tile colours, then makes
+// matching pixels and hard border pixels transparent.
+// No near-white stripping (that caused a halo artifact).
 function loadCarSprite(src) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
+      const W   = img.width;
+      const H   = img.height;
       const oc  = document.createElement('canvas');
-      oc.width  = img.width;
-      oc.height = img.height;
+      oc.width  = W;
+      oc.height = H;
       const octx = oc.getContext('2d');
       octx.drawImage(img, 0, 0);
 
-      const imageData = octx.getImageData(0, 0, oc.width, oc.height);
+      const imageData = octx.getImageData(0, 0, W, H);
       const d = imageData.data;
 
-      // Sample first 30 pixels of the top row to capture both checkerboard
-      // tile colours without hard-coding them.
+      // Sample 20px strips along all four edges to capture both checkerboard
+      // tile colours regardless of which corner they fall on.
+      const SAMPLE = 20;
+      const samplePixel = (x, y) => {
+        const idx = (y * W + x) * 4;
+        return [d[idx], d[idx+1], d[idx+2]];
+      };
       const bgMap = new Map();
-      for (let sx = 0; sx < Math.min(oc.width, 30); sx++) {
-        const idx = sx * 4;
-        const key = `${Math.round(d[idx]/25)},${Math.round(d[idx+1]/25)},${Math.round(d[idx+2]/25)}`;
-        if (!bgMap.has(key)) bgMap.set(key, [d[idx], d[idx+1], d[idx+2]]);
+      const addSample = (r, g, b) => {
+        const key = `${Math.round(r/20)},${Math.round(g/20)},${Math.round(b/20)}`;
+        if (!bgMap.has(key)) bgMap.set(key, [r, g, b]);
+      };
+      for (let i = 0; i < SAMPLE; i++) {
+        addSample(...samplePixel(i, 0));           // top edge
+        addSample(...samplePixel(W - 1 - i, 0));   // top-right
+        addSample(...samplePixel(0, H - 1 - i));   // bottom-left
+        addSample(...samplePixel(W - 1 - i, H - 1 - i)); // bottom-right
       }
       const bgColors = [...bgMap.values()];
 
-      for (let i = 0; i < d.length; i += 4) {
-        for (const [br, bg, bb] of bgColors) {
-          if (Math.abs(d[i] - br) + Math.abs(d[i+1] - bg) + Math.abs(d[i+2] - bb) < 55) {
+      const BORDER = 3;   // px from edge always made transparent
+      const TOL    = 30;  // per-channel tolerance for checkerboard match
+
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          // Hard border strip
+          if (x < BORDER || x >= W - BORDER || y < BORDER || y >= H - BORDER) {
             d[i + 3] = 0;
-            break;
+            continue;
+          }
+          // Checkerboard colour match
+          for (const [br, bg, bb] of bgColors) {
+            if (Math.abs(d[i] - br) <= TOL &&
+                Math.abs(d[i+1] - bg) <= TOL &&
+                Math.abs(d[i+2] - bb) <= TOL) {
+              d[i + 3] = 0;
+              break;
+            }
           }
         }
       }
