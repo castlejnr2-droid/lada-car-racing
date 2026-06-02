@@ -20,6 +20,51 @@
 import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
+// ─── sprite loader ────────────────────────────────────────────────────────────
+// Loads the pixel-art Lada image and colour-keys out the grey checkerboard
+// background (which is baked into the JPG since JPEGs have no alpha channel).
+// Returns an OffscreenCanvas / regular canvas with transparent background.
+function loadCarSprite(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const oc  = document.createElement('canvas');
+      oc.width  = img.width;
+      oc.height = img.height;
+      const octx = oc.getContext('2d');
+      octx.drawImage(img, 0, 0);
+
+      const imageData = octx.getImageData(0, 0, oc.width, oc.height);
+      const d = imageData.data;
+
+      // Sample the first 30 pixels of the top row to capture both checkerboard
+      // tile colours without hard-coding them (light ~rgb(200,200,200) and
+      // dark ~rgb(150,150,150)).
+      const bgMap = new Map();
+      for (let sx = 0; sx < Math.min(oc.width, 30); sx++) {
+        const idx = sx * 4;
+        const key = `${Math.round(d[idx]/25)},${Math.round(d[idx+1]/25)},${Math.round(d[idx+2]/25)}`;
+        if (!bgMap.has(key)) bgMap.set(key, [d[idx], d[idx+1], d[idx+2]]);
+      }
+      const bgColors = [...bgMap.values()];
+
+      // Make pixels that closely match any background tile transparent.
+      for (let i = 0; i < d.length; i += 4) {
+        for (const [br, bg, bb] of bgColors) {
+          if (Math.abs(d[i] - br) + Math.abs(d[i+1] - bg) + Math.abs(d[i+2] - bb) < 55) {
+            d[i + 3] = 0;
+            break;
+          }
+        }
+      }
+      octx.putImageData(imageData, 0, 0);
+      resolve(oc);
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
 // ─── tunables ────────────────────────────────────────────────────────────────
 const PHYS_PER_FRAME  = 2;
 const SCROLL_SCALE    = 2.0;
@@ -94,12 +139,9 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   let cancelled  = false;
   let rafId      = null;
 
-  // Accumulated wheel rotation angle per car (radians). Each car's wheels spin at
-  // a speed proportional to its own physics speed: angle += speed * SCROLL_SCALE / WR.
-  // We update per-physics-tick (same cadence as scrollX) so the wheel rate matches
-  // the road scroll exactly.
-  const wheelAngles = new Array(N).fill(0);
-  const WR_SCREEN   = CAR_H * 0.22;   // wheel radius in screen px (mirrors drawLada)
+  // Sprite: load the pixel-art Lada image; fall back to canvas drawing until ready.
+  let carSprite = null;
+  loadCarSprite('/lada1.jpg').then((s) => { carSprite = s; });
 
   const endStartX = new Array(N).fill(0);
 
@@ -117,11 +159,6 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
       if (frameCount % PHYS_PER_FRAME === 0 && physTick < sim.history.length - 1) {
         physTick++;
         onTick?.(physTick, sim);
-        // Advance each car's wheel angle by its own speed this tick
-        const s = sim.history[physTick];
-        for (let i = 0; i < N; i++) {
-          wheelAngles[i] += s.speeds[i] * SCROLL_SCALE / WR_SCREEN;
-        }
       }
       if (physTick >= sim.history.length - 1) {
         const leadPos = Math.max(...sim.history[physTick].positions);
@@ -143,10 +180,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     if (endFrame < 0) {
       scrollX += Math.max(...state.speeds, 1) * SCROLL_SCALE;
     } else if (endFrame < END_DRIVE) {
-      const endScrollDelta = winnerSpd * SCROLL_SCALE * (1 - easeOutCubic(endFrame / END_DRIVE) * 0.6);
-      scrollX += endScrollDelta;
-      // Winner's wheels keep spinning while driving to finish; loser's slow to a stop
-      wheelAngles[sim.winner] += endScrollDelta / WR_SCREEN;
+      scrollX += winnerSpd * SCROLL_SCALE * (1 - easeOutCubic(endFrame / END_DRIVE) * 0.6);
     }
 
     // ── side-view car screen-x ────────────────────────────────────────────
@@ -226,7 +260,8 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     } else {
       drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                 sim, state, scenery, scrollX, physTick, endFrame,
-                carX, finishLineX, sim.winner, flashOn, celebFrame, confetti, playerNames);
+                carX, finishLineX, sim.winner, flashOn, celebFrame, confetti, playerNames,
+                carSprite);
     }
 
     // Side-view completion (front view handles its own above)
@@ -271,7 +306,8 @@ function buildScenery(rng, W) {
 // ─── SIDE VIEW frame ─────────────────────────────────────────────────────────
 function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                    sim, state, scenery, scrollX, physTick, endFrame,
-                   carX, finishLineX, winnerIdx, flashOn, celebFrame, confetti, playerNames) {
+                   carX, finishLineX, winnerIdx, flashOn, celebFrame, confetti, playerNames,
+                   carSprite) {
   ctx.clearRect(0, 0, W, H);
   drawSky(ctx, W, SKY_H, scrollX, scenery.buildings);
   drawTrees(ctx, W, SKY_H, TREE_H, scrollX, scenery.trees);
@@ -286,11 +322,16 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
       : 0;
     const stopped = celebFrame >= 0 && i !== winnerIdx;
     const carY = baseY + bounce;
-    drawLada(ctx, carX[i], carY, CAR_W, CAR_H,
-             CAR_COLORS[i % CAR_COLORS.length],
-             stopped ? 0 : state.speeds[i], state.hits[i],
-             i === winnerIdx && flashOn,
-             wheelAngles[i]);
+    if (carSprite) {
+      drawCarSprite(ctx, carSprite, carX[i], carY, CAR_W, CAR_H, i,
+                    stopped ? 0 : state.speeds[i], state.hits[i],
+                    i === winnerIdx && flashOn);
+    } else {
+      drawLada(ctx, carX[i], carY, CAR_W, CAR_H,
+               CAR_COLORS[i % CAR_COLORS.length],
+               stopped ? 0 : state.speeds[i], state.hits[i],
+               i === winnerIdx && flashOn);
+    }
 
     // Player name above car
     const name = playerNames[i];
@@ -851,9 +892,63 @@ function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
   ctx.restore();
 }
 
-// ─── SIDE VIEW — Lada 2107 silhouette ────────────────────────────────────────
+// ─── sprite draw ─────────────────────────────────────────────────────────────
+// Draws the pixel-art Lada sprite in place of the canvas-drawn car.
+// carIdx 0 = normal colours; carIdx 1 = hue-rotated to distinguish players.
+// The image faces right (same direction as the race) so no flip needed.
+function drawCarSprite(ctx, sprite, cx, cy, CW, CH, carIdx, speed, hit, flashOn) {
+  // Scale sprite to match the car width; preserve aspect ratio.
+  const spriteAR = sprite.height / sprite.width;
+  const w  = CW;
+  const h  = w * spriteAR;
+  // Align so the bottom of the image (wheel/ground line) sits at cy.
+  // The pixel-art car image has ~12% padding below the wheel centres.
+  const x  = cx - w / 2;
+  const y  = cy - h * 0.88;
+
+  ctx.save();
+
+  // Exhaust smoke from the rear (left) of the car
+  if (speed > 0.8) {
+    const n  = hit ? 5 : Math.min(5, Math.ceil(speed / 1.6));
+    const sm = hit ? 1.6 : (1 + speed * 0.08);
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = hit
+        ? `rgba(80,65,45,${0.58 - i * 0.10})`
+        : `rgba(125,118,110,${0.35 - i * 0.06})`;
+      ctx.beginPath();
+      ctx.arc(x - i * 16 - 12, y + h * 0.72 - i * 3, (4 + i * 4.5) * sm, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Speed lines to the left of the car
+  if (speed > 2.5 && !hit) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1.5;
+    for (let i = 0; i < 5; i++) {
+      const len = 18 + (4 - i) * 9 + speed * 2;
+      const lny = y + h * (0.32 + i * 0.07);
+      ctx.beginPath(); ctx.moveTo(x - len - 8, lny); ctx.lineTo(x - 8, lny); ctx.stroke();
+    }
+  }
+
+  // Car 1: normal. Car 2: hue-rotate so they're clearly distinct on screen.
+  if (carIdx === 1) ctx.filter = 'hue-rotate(180deg)';
+  ctx.drawImage(sprite, x, y, w, h);
+  ctx.filter = 'none';
+
+  // Victory flash
+  if (flashOn) {
+    ctx.fillStyle = 'rgba(255,215,40,0.28)';
+    ctx.fillRect(x - 6, y - 6, w + 12, h + 12);
+  }
+
+  ctx.restore();
+}
+
+// ─── SIDE VIEW — Lada 2107 silhouette (canvas fallback while sprite loads) ───
 // cx = centre x, cy = wheel-centre y, x=0 REAR x=1 FRONT (faces right)
-function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn, wheelAngle = 0) {
+function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   const L   = cx - CW / 2;
   const TOP = cy - CH * 0.78;
   const px = (nx) => L   + nx * CW;
@@ -960,8 +1055,8 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn, wheelAngle = 
   ctx.fillStyle = shade(color, -0.28);
   ctx.beginPath(); ctx.arc(rWX, WY, WR+3, Math.PI, 0); ctx.fill();
   ctx.beginPath(); ctx.arc(fWX, WY, WR+3, Math.PI, 0); ctx.fill();
-  drawWheel(ctx, rWX, WY, WR, wheelAngle);
-  drawWheel(ctx, fWX, WY, WR, wheelAngle);
+  drawWheel(ctx, rWX, WY, WR);
+  drawWheel(ctx, fWX, WY, WR);
 
   if (hit) {
     ctx.fillStyle = 'rgba(55,45,35,0.72)';
