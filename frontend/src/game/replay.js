@@ -21,12 +21,48 @@ import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── sprite loader ────────────────────────────────────────────────────────────
-// Loads the pixel-art Lada PNG (which already has a transparent background).
+// Loads the pixel-art Lada JPG and colour-keys out the grey checkerboard
+// background (baked into the JPG since JPEGs have no alpha channel).
+// Returns a canvas element with a transparent background.
 function loadCarSprite(src) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload  = () => resolve(img);
-    img.onerror = () => resolve(null);
+    img.onload = () => {
+      const oc  = document.createElement('canvas');
+      oc.width  = img.width;
+      oc.height = img.height;
+      const octx = oc.getContext('2d');
+      octx.drawImage(img, 0, 0);
+
+      const imageData = octx.getImageData(0, 0, oc.width, oc.height);
+      const d = imageData.data;
+
+      // Sample the first 30 pixels of the top row to capture both checkerboard
+      // tile colours (light ~rgb(200,200,200) and dark ~rgb(150,150,150)).
+      const bgMap = new Map();
+      for (let sx = 0; sx < Math.min(oc.width, 30); sx++) {
+        const idx = sx * 4;
+        const key = `${Math.round(d[idx]/25)},${Math.round(d[idx+1]/25)},${Math.round(d[idx+2]/25)}`;
+        if (!bgMap.has(key)) bgMap.set(key, [d[idx], d[idx+1], d[idx+2]]);
+      }
+      const bgColors = [...bgMap.values()];
+
+      // Remove checkerboard tiles only — no white-pixel stripping.
+      for (let i = 0; i < d.length; i += 4) {
+        for (const [br, bg, bb] of bgColors) {
+          if (Math.abs(d[i] - br) + Math.abs(d[i+1] - bg) + Math.abs(d[i+2] - bb) < 55) {
+            d[i + 3] = 0;
+            break;
+          }
+        }
+      }
+      octx.putImageData(imageData, 0, 0);
+      resolve(oc);
+    };
+    img.onerror = (e) => {
+      console.error('[replay] failed to load car sprite:', src, e);
+      resolve(null);
+    };
     img.src = src;
   });
 }
@@ -251,7 +287,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   }
 
   // Only kick off the loop once the sprite is fully decoded — no fallback flash.
-  loadCarSprite('/lada-pixel.png').then((s) => {
+  loadCarSprite('/lada1.jpg').then((s) => {
     if (cancelled) return;
     carSprite = s;
     rafId = requestAnimationFrame(loop);
