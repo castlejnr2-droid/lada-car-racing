@@ -287,7 +287,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   }
 
   // Only kick off the loop once the sprite is fully decoded — no fallback flash.
-  loadCarSprite('/lada-pixel.png.jpg').then((s) => {
+  loadCarSprite('/lada-pixel.jpg').then((s) => {
     if (cancelled) return;
     carSprite = s;
     rafId = requestAnimationFrame(loop);
