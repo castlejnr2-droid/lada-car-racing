@@ -21,49 +21,11 @@ import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── sprite loader ────────────────────────────────────────────────────────────
-// Loads the pixel-art Lada image and colour-keys out the grey checkerboard
-// background (which is baked into the JPG since JPEGs have no alpha channel).
-// Returns an OffscreenCanvas / regular canvas with transparent background.
+// Loads the pixel-art Lada PNG (which already has a transparent background).
 function loadCarSprite(src) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => {
-      const oc  = document.createElement('canvas');
-      oc.width  = img.width;
-      oc.height = img.height;
-      const octx = oc.getContext('2d');
-      octx.drawImage(img, 0, 0);
-
-      const imageData = octx.getImageData(0, 0, oc.width, oc.height);
-      const d = imageData.data;
-
-      // Sample the first 30 pixels of the top row to capture both checkerboard
-      // tile colours without hard-coding them (light ~rgb(200,200,200) and
-      // dark ~rgb(150,150,150)).
-      const bgMap = new Map();
-      for (let sx = 0; sx < Math.min(oc.width, 30); sx++) {
-        const idx = sx * 4;
-        const key = `${Math.round(d[idx]/25)},${Math.round(d[idx+1]/25)},${Math.round(d[idx+2]/25)}`;
-        if (!bgMap.has(key)) bgMap.set(key, [d[idx], d[idx+1], d[idx+2]]);
-      }
-      const bgColors = [...bgMap.values()];
-
-      // Pass 1 — remove checkerboard tiles.
-      for (let i = 0; i < d.length; i += 4) {
-        for (const [br, bg, bb] of bgColors) {
-          if (Math.abs(d[i] - br) + Math.abs(d[i+1] - bg) + Math.abs(d[i+2] - bb) < 55) {
-            d[i + 3] = 0;
-            break;
-          }
-        }
-      }
-      // Pass 2 — remove the white sticker border (all channels > 240).
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i] > 240 && d[i+1] > 240 && d[i+2] > 240) d[i + 3] = 0;
-      }
-      octx.putImageData(imageData, 0, 0);
-      resolve(oc);
-    };
+    img.onload  = () => resolve(img);
     img.onerror = () => resolve(null);
     img.src = src;
   });
@@ -81,10 +43,10 @@ const END_CELEBRATE = 50;
 const END_HOLD      = 20;
 const END_TOTAL     = END_DRIVE + END_CELEBRATE + END_HOLD;
 
-// Countdown before race starts: 3, 2, 1 at 60 frames each + GO! at 40 frames.
-const COUNTDOWN_STEP  = 60;   // frames per number (≈1 s at 60 fps)
-const COUNTDOWN_GO    = 40;   // frames for GO!
-const COUNTDOWN_TOTAL = 3 * COUNTDOWN_STEP + COUNTDOWN_GO;  // 220
+// Countdown before race starts: 3, 2, 1 at 36 frames each + GO! at 24 frames.
+const COUNTDOWN_STEP  = 36;   // frames per number (≈0.6 s at 60 fps)
+const COUNTDOWN_GO    = 24;   // frames for GO!
+const COUNTDOWN_TOTAL = 3 * COUNTDOWN_STEP + COUNTDOWN_GO;  // 132
 
 // Perspective strength for front view (higher = more aggressive vanishing)
 const PERSP_K = 5;
@@ -289,7 +251,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   }
 
   // Only kick off the loop once the sprite is fully decoded — no fallback flash.
-  loadCarSprite('/lada1.jpg').then((s) => {
+  loadCarSprite('/lada-pixel.png').then((s) => {
     if (cancelled) return;
     carSprite = s;
     rafId = requestAnimationFrame(loop);
