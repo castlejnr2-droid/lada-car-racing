@@ -21,8 +21,8 @@ import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── tunables ────────────────────────────────────────────────────────────────
-const PHYS_PER_FRAME  = 3;
-const SCROLL_SCALE    = 1.25;
+const PHYS_PER_FRAME  = 2;
+const SCROLL_SCALE    = 2.0;
 const LEAD_X_FRAC     = 0.30;
 const SPREAD_SCALE    = 1.1;
 const FINISH_X_FRAC   = 0.72;
@@ -94,6 +94,13 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   let cancelled  = false;
   let rafId      = null;
 
+  // Accumulated wheel rotation angle per car (radians). Each car's wheels spin at
+  // a speed proportional to its own physics speed: angle += speed * SCROLL_SCALE / WR.
+  // We update per-physics-tick (same cadence as scrollX) so the wheel rate matches
+  // the road scroll exactly.
+  const wheelAngles = new Array(N).fill(0);
+  const WR_SCREEN   = CAR_H * 0.22;   // wheel radius in screen px (mirrors drawLada)
+
   const endStartX = new Array(N).fill(0);
 
   // ── front-view finish state ─────────────────────────────────────────────
@@ -110,6 +117,11 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
       if (frameCount % PHYS_PER_FRAME === 0 && physTick < sim.history.length - 1) {
         physTick++;
         onTick?.(physTick, sim);
+        // Advance each car's wheel angle by its own speed this tick
+        const s = sim.history[physTick];
+        for (let i = 0; i < N; i++) {
+          wheelAngles[i] += s.speeds[i] * SCROLL_SCALE / WR_SCREEN;
+        }
       }
       if (physTick >= sim.history.length - 1) {
         const leadPos = Math.max(...sim.history[physTick].positions);
@@ -131,7 +143,10 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     if (endFrame < 0) {
       scrollX += Math.max(...state.speeds, 1) * SCROLL_SCALE;
     } else if (endFrame < END_DRIVE) {
-      scrollX += winnerSpd * SCROLL_SCALE * (1 - easeOutCubic(endFrame / END_DRIVE) * 0.6);
+      const endScrollDelta = winnerSpd * SCROLL_SCALE * (1 - easeOutCubic(endFrame / END_DRIVE) * 0.6);
+      scrollX += endScrollDelta;
+      // Winner's wheels keep spinning while driving to finish; loser's slow to a stop
+      wheelAngles[sim.winner] += endScrollDelta / WR_SCREEN;
     }
 
     // ── side-view car screen-x ────────────────────────────────────────────
@@ -274,7 +289,8 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
     drawLada(ctx, carX[i], carY, CAR_W, CAR_H,
              CAR_COLORS[i % CAR_COLORS.length],
              stopped ? 0 : state.speeds[i], state.hits[i],
-             i === winnerIdx && flashOn);
+             i === winnerIdx && flashOn,
+             wheelAngles[i]);
 
     // Player name above car
     const name = playerNames[i];
@@ -837,7 +853,7 @@ function drawCelebration(ctx, cx, cy, CW, CH, celebFrame, particles) {
 
 // ─── SIDE VIEW — Lada 2107 silhouette ────────────────────────────────────────
 // cx = centre x, cy = wheel-centre y, x=0 REAR x=1 FRONT (faces right)
-function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
+function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn, wheelAngle = 0) {
   const L   = cx - CW / 2;
   const TOP = cy - CH * 0.78;
   const px = (nx) => L   + nx * CW;
@@ -944,8 +960,8 @@ function drawLada(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
   ctx.fillStyle = shade(color, -0.28);
   ctx.beginPath(); ctx.arc(rWX, WY, WR+3, Math.PI, 0); ctx.fill();
   ctx.beginPath(); ctx.arc(fWX, WY, WR+3, Math.PI, 0); ctx.fill();
-  drawWheel(ctx, rWX, WY, WR);
-  drawWheel(ctx, fWX, WY, WR);
+  drawWheel(ctx, rWX, WY, WR, wheelAngle);
+  drawWheel(ctx, fWX, WY, WR, wheelAngle);
 
   if (hit) {
     ctx.fillStyle = 'rgba(55,45,35,0.72)';
@@ -1051,21 +1067,29 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
 }
 
 // ─── wheel ───────────────────────────────────────────────────────────────────
-function drawWheel(ctx, cx, cy, r) {
+function drawWheel(ctx, cx, cy, r, angle = 0) {
+  // Tyre
   ctx.fillStyle = '#111116';
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+  // Rim ring
   ctx.strokeStyle = '#555550'; ctx.lineWidth = r*0.18;
   ctx.beginPath(); ctx.arc(cx, cy, r*0.62, 0, Math.PI*2); ctx.stroke();
+  // Hub cap
   ctx.fillStyle = '#888882';
   ctx.beginPath(); ctx.arc(cx, cy, r*0.22, 0, Math.PI*2); ctx.fill();
+  // Spokes — rotated by wheel angle
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
   ctx.strokeStyle = '#6a6a65'; ctx.lineWidth = 1;
   for (let i = 0; i < 5; i++) {
-    const a = (i/5)*Math.PI*2;
+    const a = (i / 5) * Math.PI * 2;
     ctx.beginPath();
-    ctx.moveTo(cx+Math.cos(a)*r*0.22, cy+Math.sin(a)*r*0.22);
-    ctx.lineTo(cx+Math.cos(a)*r*0.58, cy+Math.sin(a)*r*0.58);
+    ctx.moveTo(Math.cos(a) * r * 0.22, Math.sin(a) * r * 0.22);
+    ctx.lineTo(Math.cos(a) * r * 0.58, Math.sin(a) * r * 0.58);
     ctx.stroke();
   }
+  ctx.restore();
 }
 
 // ─── util ────────────────────────────────────────────────────────────────────
