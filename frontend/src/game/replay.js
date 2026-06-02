@@ -962,8 +962,16 @@ function drawCarSprite(ctx, sprite, cx, cy, CW, CH, carIdx, speed, hit, flashOn)
   }
 
   // Car 0: normal. Car 1: strong blue shift so players can tell them apart instantly.
-  // Car 1 gets a strong red tint — sepia first to desaturate, then heavy red hue.
-  if (carIdx === 1) ctx.filter = 'sepia(1) saturate(4) hue-rotate(320deg) brightness(0.95)';
+  // Each car gets a unique filter so all 5 players are instantly distinguishable.
+  const CAR_FILTERS = [
+    null,                                                        // 0: original cream/blue
+    'sepia(1) saturate(4) hue-rotate(320deg) brightness(0.95)', // 1: deep red
+    'hue-rotate(90deg) saturate(2)',                            // 2: green
+    'hue-rotate(260deg) saturate(2)',                           // 3: purple
+    'hue-rotate(30deg) saturate(3) sepia(0.5)',                 // 4: orange
+  ];
+  const carFilter = CAR_FILTERS[carIdx % CAR_FILTERS.length];
+  if (carFilter) ctx.filter = carFilter;
   ctx.drawImage(sprite, x, y, w, h);
   ctx.filter = 'none';
 
