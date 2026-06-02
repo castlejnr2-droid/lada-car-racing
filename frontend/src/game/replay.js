@@ -77,6 +77,11 @@ const END_CELEBRATE = 50;
 const END_HOLD      = 20;
 const END_TOTAL     = END_DRIVE + END_CELEBRATE + END_HOLD;
 
+// Countdown before race starts: 3, 2, 1 at 60 frames each + GO! at 40 frames.
+const COUNTDOWN_STEP  = 60;   // frames per number (≈1 s at 60 fps)
+const COUNTDOWN_GO    = 40;   // frames for GO!
+const COUNTDOWN_TOTAL = 3 * COUNTDOWN_STEP + COUNTDOWN_GO;  // 220
+
 // Perspective strength for front view (higher = more aggressive vanishing)
 const PERSP_K = 5;
 
@@ -115,7 +120,7 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
   const TREE_H = H * 0.08;
   const ROAD_Y = SKY_H + TREE_H;
   const LANE_H = (H - ROAD_Y) / N;
-  const CAR_W  = Math.min(LANE_H * 2.4, 144);
+  const CAR_W  = Math.min(LANE_H * 3.6, 216);
   const CAR_H  = CAR_W * 0.42;
 
   const FINISH_X = W * FINISH_X_FRAC;
@@ -154,22 +159,27 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     if (cancelled) return;
     frameCount++;
 
+    // ── countdown gate ────────────────────────────────────────────────────
+    const countdownActive = frameCount <= COUNTDOWN_TOTAL;
+
     // ── physics ───────────────────────────────────────────────────────────
-    if (endFrame < 0) {
-      if (frameCount % PHYS_PER_FRAME === 0 && physTick < sim.history.length - 1) {
-        physTick++;
-        onTick?.(physTick, sim);
-      }
-      if (physTick >= sim.history.length - 1) {
-        const leadPos = Math.max(...sim.history[physTick].positions);
-        for (let i = 0; i < N; i++) {
-          endStartX[i] = W * LEAD_X_FRAC
-            - (leadPos - sim.history[physTick].positions[i]) / TRACK_LENGTH * W * SPREAD_SCALE;
+    if (!countdownActive) {
+      if (endFrame < 0) {
+        if (frameCount % PHYS_PER_FRAME === 0 && physTick < sim.history.length - 1) {
+          physTick++;
+          onTick?.(physTick, sim);
         }
-        endFrame = 0;
+        if (physTick >= sim.history.length - 1) {
+          const leadPos = Math.max(...sim.history[physTick].positions);
+          for (let i = 0; i < N; i++) {
+            endStartX[i] = W * LEAD_X_FRAC
+              - (leadPos - sim.history[physTick].positions[i]) / TRACK_LENGTH * W * SPREAD_SCALE;
+          }
+          endFrame = 0;
+        }
+      } else {
+        endFrame++;
       }
-    } else {
-      endFrame++;
     }
 
     const state     = sim.history[physTick];
@@ -177,10 +187,12 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
     const winnerSpd = Math.max(...lastState.speeds, 1);
 
     // ── road scroll (side view) ───────────────────────────────────────────
-    if (endFrame < 0) {
-      scrollX += Math.max(...state.speeds, 1) * SCROLL_SCALE;
-    } else if (endFrame < END_DRIVE) {
-      scrollX += winnerSpd * SCROLL_SCALE * (1 - easeOutCubic(endFrame / END_DRIVE) * 0.6);
+    if (!countdownActive) {
+      if (endFrame < 0) {
+        scrollX += Math.max(...state.speeds, 1) * SCROLL_SCALE;
+      } else if (endFrame < END_DRIVE) {
+        scrollX += winnerSpd * SCROLL_SCALE * (1 - easeOutCubic(endFrame / END_DRIVE) * 0.6);
+      }
     }
 
     // ── side-view car screen-x ────────────────────────────────────────────
@@ -264,6 +276,9 @@ export function runReplay(canvas, hexSeed, { onComplete, onTick, getViewMode = (
                 carSprite);
     }
 
+    // Countdown overlay (both views)
+    if (countdownActive) drawCountdown(ctx, W, H, frameCount);
+
     // Side-view completion (front view handles its own above)
     if (getViewMode() !== 'front' && endFrame >= END_TOTAL) { onComplete?.(); return; }
     rafId = requestAnimationFrame(loop);
@@ -339,19 +354,20 @@ function drawFrame(ctx, W, H, N, SKY_H, TREE_H, ROAD_Y, LANE_H, CAR_W, CAR_H,
                i === winnerIdx && flashOn);
     }
 
-    // Player name above car
+    // Player name above car — bold white with drop shadow for legibility
     const name = playerNames[i];
     if (name) {
-      const label = name.length > 10 ? name.slice(0, 10) : name;
-      const fontSize = Math.max(9, Math.round(CAR_H * 0.38));
-      const nameY = carY - CAR_H * 0.85;
+      const label = name.length > 12 ? name.slice(0, 12) : name;
+      const fontSize = Math.max(12, Math.round(CAR_H * 0.52));
+      const nameY = carY - CAR_H * 1.05;
       ctx.save();
       ctx.font = `bold ${fontSize}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      const tw = ctx.measureText(label).width;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(carX[i] - tw / 2 - 3, nameY - fontSize - 1, tw + 6, fontSize + 3);
+      ctx.shadowColor = 'rgba(0,0,0,0.95)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 2;
       ctx.fillStyle = '#ffffff';
       ctx.fillText(label, carX[i], nameY);
       ctx.restore();
@@ -938,8 +954,8 @@ function drawCarSprite(ctx, sprite, cx, cy, CW, CH, carIdx, speed, hit, flashOn)
     }
   }
 
-  // Car 1: normal. Car 2: hue-rotate so they're clearly distinct on screen.
-  if (carIdx === 1) ctx.filter = 'hue-rotate(180deg)';
+  // Car 0: normal. Car 1: strong blue shift so players can tell them apart instantly.
+  if (carIdx === 1) ctx.filter = 'hue-rotate(200deg) saturate(1.4) brightness(1.1)';
   ctx.drawImage(sprite, x, y, w, h);
   ctx.filter = 'none';
 
@@ -1164,6 +1180,57 @@ function drawLadaFront(ctx, cx, cy, CW, CH, color, speed, hit, flashOn) {
     ctx.fillStyle='rgba(255,215,40,0.28)';
     ctx.fillRect(L-6, T-6, CW+12, CH+12);
   }
+  ctx.restore();
+}
+
+// ─── countdown overlay ────────────────────────────────────────────────────────
+function drawCountdown(ctx, W, H, frame) {
+  let label, stepFrame, stepTotal;
+  if (frame <= COUNTDOWN_STEP) {
+    label = '3'; stepFrame = frame; stepTotal = COUNTDOWN_STEP;
+  } else if (frame <= COUNTDOWN_STEP * 2) {
+    label = '2'; stepFrame = frame - COUNTDOWN_STEP; stepTotal = COUNTDOWN_STEP;
+  } else if (frame <= COUNTDOWN_STEP * 3) {
+    label = '1'; stepFrame = frame - COUNTDOWN_STEP * 2; stepTotal = COUNTDOWN_STEP;
+  } else {
+    label = 'GO!'; stepFrame = frame - COUNTDOWN_STEP * 3; stepTotal = COUNTDOWN_GO;
+  }
+
+  const t     = stepFrame / stepTotal;
+  // Fade in fast, hold, fade out near the end
+  const alpha = t < 0.12 ? t / 0.12 : t > 0.78 ? (1 - t) / 0.22 : 1;
+  // Pop-in scale: starts 1.4×, settles to 1× over the first 12 frames
+  const scale = 1 + Math.max(0, 1 - stepFrame / 12) * 0.4;
+
+  const isGo      = label === 'GO!';
+  const fontSize  = Math.round(Math.min(W, H) * (isGo ? 0.20 : 0.26));
+  const glowColor = isGo ? '#44ff88' : '#ffd700';
+  const textColor = isGo ? '#44ff88' : '#ffffff';
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(W / 2, H * 0.48);
+  ctx.scale(scale, scale);
+  ctx.font        = `bold ${fontSize}px monospace`;
+  ctx.textAlign   = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Outer glow
+  ctx.shadowColor = glowColor;
+  ctx.shadowBlur  = 40;
+  ctx.fillStyle   = textColor;
+  ctx.fillText(label, 0, 0);
+
+  // Second pass for extra glow intensity
+  ctx.shadowBlur = 20;
+  ctx.fillText(label, 0, 0);
+
+  // Hard dark outline for contrast
+  ctx.shadowBlur    = 0;
+  ctx.strokeStyle   = 'rgba(0,0,0,0.85)';
+  ctx.lineWidth     = Math.max(2, fontSize * 0.04);
+  ctx.strokeText(label, 0, 0);
+
   ctx.restore();
 }
 
