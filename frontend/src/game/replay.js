@@ -119,13 +119,10 @@ export function runReplay(canvas, hexSeed, {
   buildSovietExtras(scene);
 
   // ── Car model containers ─────────────────────────────────────────────────
-  // Box cars are added immediately so cars are always visible.
-  // GLB models load in the background and swap in once ready.
   const carMeshes = Array.from({ length: N }, (_, i) => {
     const group = new THREE.Group();
     group.position.set(laneX[i], 0, 0);
     scene.add(group);
-    buildBoxCar(group, CAR_TINTS[i % CAR_TINTS.length]);
     return group;
   });
 
@@ -139,38 +136,38 @@ export function runReplay(canvas, hexSeed, {
   let cancelled  = false;
   let rafId      = null;
 
-  // ── GLB car model loader (background) ────────────────────────────────────
-  // Box cars already show. When GLB arrives, clear each group and swap in the
-  // real model. Silently ignored if load fails — box cars remain.
-  function loadGlbInBackground() {
-    new GLTFLoader().load(
-      '/car.glb',
-      (gltf) => {
-        if (cancelled) return;
-        for (const [i, group] of carMeshes.entries()) {
-          // Remove existing box car children
-          while (group.children.length) group.remove(group.children[0]);
-          const model = gltf.scene.clone(true);
-          model.scale.setScalar(CAR_SCALE);
-          model.rotation.y = Math.PI;
-          const tint = CAR_TINTS[i % CAR_TINTS.length];
-          model.traverse((child) => {
-            if (child.isMesh) {
-              child.frustumCulled = false;
-              if (child.material) {
-                child.material = child.material.clone();
-                if (tint) child.material.color.multiply(tint);
+  // ── GLB car model loader ──────────────────────────────────────────────────
+  function loadCarModel() {
+    return new Promise((resolve) => {
+      new GLTFLoader().load(
+        'https://raw.githubusercontent.com/castlejnr2-droid/lada-car-racing/main/frontend/public/car.glb',
+        (gltf) => {
+          if (cancelled) { resolve(); return; }
+          for (const [i, group] of carMeshes.entries()) {
+            const model = gltf.scene.clone(true);
+            model.scale.setScalar(CAR_SCALE);
+            model.rotation.y = Math.PI;
+            const tint = CAR_TINTS[i % CAR_TINTS.length];
+            model.traverse((child) => {
+              if (child.isMesh) {
+                child.frustumCulled = false;
+                if (child.material) {
+                  child.material = child.material.clone();
+                  if (tint) child.material.color.multiply(tint);
+                }
               }
-            }
-          });
-          group.add(model);
-        }
-      },
-      undefined,
-      (err) => {
-        console.error('[replay] car.glb failed to load — box cars will remain:', err);
-      },
-    );
+            });
+            group.add(model);
+          }
+          resolve();
+        },
+        undefined,
+        (err) => {
+          console.error('[replay] car.glb failed to load:', err);
+          resolve();
+        },
+      );
+    });
   }
 
   // ── Main loop ─────────────────────────────────────────────────────────────
@@ -251,10 +248,10 @@ export function runReplay(canvas, hexSeed, {
     rafId = requestAnimationFrame(loop);
   }
 
-  // Start render loop immediately (box cars are already in scene)
-  // GLB loads in background and swaps in when ready
-  rafId = requestAnimationFrame(loop);
-  loadGlbInBackground();
+  // Hold loop until GLB is loaded
+  loadCarModel().then(() => {
+    if (!cancelled) rafId = requestAnimationFrame(loop);
+  });
 
   return () => {
     cancelled = true;
@@ -262,36 +259,6 @@ export function runReplay(canvas, hexSeed, {
     canvas.style.imageRendering = '';
     renderer.dispose();
   };
-}
-
-// ─── Box car fallback ─────────────────────────────────────────────────────────
-// Used when car.glb fails to load (e.g. mobile network error).
-// Builds a simple body+roof+4-wheel car from primitives, in the car's tint colour.
-function buildBoxCar(group, tint) {
-  const base = tint ? tint.clone() : new THREE.Color(0xe8e0d0);
-  const bodyMat  = new THREE.MeshStandardMaterial({ color: base, roughness: 0.5, metalness: 0.2 });
-  const roofMat  = new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(0.82), roughness: 0.5, metalness: 0.1 });
-  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
-
-  const addMesh = (geo, mat, x, y, z) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z);
-    m.frustumCulled = false;
-    group.add(m);
-    return m;
-  };
-
-  // body: 2.5w x 0.8h x 1.2d  (y offset = 0.3 wheels + half body height)
-  addMesh(new THREE.BoxGeometry(2.5, 0.8, 1.2), bodyMat, 0, 0.7, 0);
-  // roof: 1.5w x 0.5h x 0.8d
-  addMesh(new THREE.BoxGeometry(1.5, 0.5, 0.8), roofMat, 0, 1.35, 0.05);
-
-  // wheels: radius 0.3, height 0.2
-  const wGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 12);
-  for (const [wx, wz] of [[-1.2, 0.38], [1.2, 0.38], [-1.2, -0.38], [1.2, -0.38]]) {
-    const w = addMesh(wGeo, wheelMat, wx, 0.3, wz);
-    w.rotation.z = Math.PI / 2;
-  }
 }
 
 // ─── Road ──────────────────────────────────────────────────────────────────────
