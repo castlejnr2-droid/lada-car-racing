@@ -22,6 +22,7 @@ const PHYS_PER_FRAME = 2;
 
 const ROAD_W    = 14;   // total road width, world units
 const CAR_SCALE = 0.3;  // GLB model uniform scale
+const CAR_H     = 2.0;  // approximate car height for HUD label offset
 
 const CAM_BACK   = 10;  // world units behind player
 const CAM_HEIGHT = 4.5;
