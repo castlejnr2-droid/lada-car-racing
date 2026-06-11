@@ -18,15 +18,15 @@ import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-const PHYS_PER_FRAME = 2;
+const PHYS_PER_FRAME = 4;   // higher = slower race (was 2; 4 = ~40% slower)
 
 const ROAD_W    = 14;   // total road width, world units
 const CAR_SCALE = 0.8;  // GLB model uniform scale
 const CAR_H     = 2.0;  // approximate car height for HUD label offset
 
-const CAM_BACK   = 10;  // world units behind player
-const CAM_HEIGHT = 4.5;
-const CAM_AHEAD  = 22;  // look-ahead from player's position
+const CAM_BACK   = 6;   // world units behind player (closer)
+const CAM_HEIGHT = 2.5; // camera height (lower, more dramatic)
+const CAM_AHEAD  = 18;  // look-ahead from player's position
 const CAM_LERP   = 0.07;
 
 const COUNTDOWN_STEP  = 36;
@@ -91,23 +91,25 @@ export function runReplay(canvas, hexSeed, {
 
   // ── Main 3D scene ─────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1e2633);
-  scene.fog = new THREE.Fog(0x1e2633, TRACK_LENGTH * 0.45, TRACK_LENGTH * 1.05);
+  // No flat background — dusk sky sphere provides the colour
+  scene.fog = new THREE.Fog(0x1a1220, TRACK_LENGTH * 0.35, TRACK_LENGTH * 0.95);
 
-  // Lighting — ambient + warm directional "streetlight" sun
-  scene.add(new THREE.AmbientLight(0xbbd4ff, 1.8));
-  const sun = new THREE.DirectionalLight(0xffd080, 0.7);
-  sun.position.set(6, 14, 10);
+  // Lighting — warm dusk palette
+  scene.add(new THREE.AmbientLight(0xffd4a0, 1.2));
+  const sun = new THREE.DirectionalLight(0xff9040, 1.1);
+  sun.position.set(-8, 10, 20);
   scene.add(sun);
-  // Soft hemisphere: sky blue from above, warm asphalt from below
-  scene.add(new THREE.HemisphereLight(0x546e9a, 0x2a2416, 0.7));
+  scene.add(new THREE.HemisphereLight(0x3a2c5a, 0x1a100a, 0.8));
+
+  // ── Dusk sky — large sphere with vertical gradient shader ─────────────────
+  buildSky(scene);
 
   // ── Main camera ───────────────────────────────────────────────────────────
   const camera  = new THREE.PerspectiveCamera(65, W / H, 0.1, TRACK_LENGTH * 2);
   // Cars move in -Z (into scene). Camera sits CAM_BACK behind car0 in Z.
   // camPos.z is updated exactly each frame (no lerp) to prevent depth lag.
   const camPos  = new THREE.Vector3(laneX[0] * 0.15, CAM_HEIGHT, CAM_BACK);
-  const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.5, -CAM_AHEAD);
+  const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.3, -CAM_AHEAD);
   camera.position.copy(camPos);
   camera.lookAt(lookTgt);
 
@@ -122,6 +124,7 @@ export function runReplay(canvas, hexSeed, {
   buildRoad(scene, N, laneX);
   const finishMesh = buildFinishLine(scene);
   buildBuildings(scene, rng);
+  buildLampPosts(scene);
 
   // ── Car model containers — filled async by loadCarModel() ────────────────
   // Using Groups so position updates work immediately; GLB content is added
@@ -232,7 +235,7 @@ export function runReplay(canvas, hexSeed, {
     camPos.y += (CAM_HEIGHT        - camPos.y) * CAM_LERP;
     camPos.z  = pz + CAM_BACK;   // exact — no lag in Z
     camera.position.copy(camPos);
-    lookTgt.set(laneX[0] * 0.1, 0.5, pz - CAM_AHEAD);
+    lookTgt.set(laneX[0] * 0.1, 0.3, pz - CAM_AHEAD);
     camera.lookAt(lookTgt);
 
     // Finish line glow pulses during celebration
@@ -360,28 +363,28 @@ function buildFinishLine(scene) {
 
 // ─── Soviet cityscape buildings ───────────────────────────────────────────────
 function buildBuildings(scene, rng) {
-  const CLEARANCE = ROAD_W / 2 + 1.5;
+  const CLEARANCE = ROAD_W / 2 + 35;  // pushed 35 units from road centre
 
   for (const side of [-1, 1]) {
     let z = 5;
     while (z < TRACK_LENGTH * 1.25) {
-      const w     = 4  + rng() * 14;
-      const h     = 8  + rng() * 32;
+      const w     = 2  + rng() * 22;   // wider variation 2–24
+      const h     = 10 + rng() * 30;   // height 10–40
       const depth = 3  + rng() * 9;
-      const gap   = 0.5 + rng() * 5;
-      const xOff  = rng() * 5;
+      const gap   = 0.5 + rng() * 4;
+      const xOff  = rng() * 8;
 
       const bx = side * (CLEARANCE + w / 2 + xOff);
-      const bz = -(z + depth / 2);  // negate: buildings run in -Z direction
+      const bz = -(z + depth / 2);
 
-      const base            = BPAL[Math.floor(rng() * BPAL.length)];
-      const emissiveIntens  = 0.06 + rng() * 0.26;
+      const base           = BPAL[Math.floor(rng() * BPAL.length)];
+      const windowIntens   = 0.15 + rng() * 0.55;  // warm amber window glow
 
-      const geo  = new THREE.BoxGeometry(w, h, depth);
-      const mat  = new THREE.MeshStandardMaterial({
+      const geo = new THREE.BoxGeometry(w, h, depth);
+      const mat = new THREE.MeshStandardMaterial({
         color: base,
-        emissive: new THREE.Color(0xb06818),
-        emissiveIntensity: emissiveIntens,
+        emissive: new THREE.Color(0xe07820),  // warm amber
+        emissiveIntensity: windowIntens,
         roughness: 0.92,
         metalness: 0,
       });
@@ -404,6 +407,78 @@ function buildBuildings(scene, rng) {
       }
 
       z += depth + gap;
+    }
+  }
+}
+
+// ─── Dusk sky sphere ──────────────────────────────────────────────────────────
+// Large sphere rendered on the inside with a ShaderMaterial that blends from
+// deep blue/purple at the top to warm orange/amber near the horizon.
+function buildSky(scene) {
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(TRACK_LENGTH * 1.8, 32, 16),
+    new THREE.ShaderMaterial({
+      uniforms: {},
+      vertexShader: /* glsl */`
+        varying vec3 vWorldPos;
+        void main() {
+          vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */`
+        varying vec3 vWorldPos;
+        void main() {
+          // t = 0 at horizon (y=0), 1 at zenith
+          float t = clamp(vWorldPos.y / 800.0, 0.0, 1.0);
+          // horizon: warm amber/orange  →  zenith: deep indigo/purple
+          vec3 horizon = vec3(0.72, 0.28, 0.08);
+          vec3 zenith  = vec3(0.06, 0.04, 0.18);
+          gl_FragColor = vec4(mix(horizon, zenith, pow(t, 0.55)), 1.0);
+        }
+      `,
+      side: THREE.BackSide,
+      depthWrite: false,
+    }),
+  );
+  scene.add(sky);
+}
+
+// ─── Roadside lamp posts ───────────────────────────────────────────────────────
+// Simple cylinder pole + glowing box head, one every 20 units along both sides.
+function buildLampPosts(scene) {
+  const POLE_H    = 6;
+  const SIDE_X    = ROAD_W / 2 + 1.2;  // just outside kerb
+  const SPACING   = 20;
+  const poleMat   = new THREE.MeshStandardMaterial({ color: 0x555560, roughness: 0.7 });
+  const headMat   = new THREE.MeshStandardMaterial({
+    color: 0xffe8a0,
+    emissive: new THREE.Color(0xffd060),
+    emissiveIntensity: 1.8,
+  });
+
+  for (const sx of [-SIDE_X, SIDE_X]) {
+    let z = 0;
+    while (z < TRACK_LENGTH * 1.1) {
+      const wz = -z;  // world Z (road runs in -Z)
+
+      // Pole
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, POLE_H, 6), poleMat);
+      pole.position.set(sx, POLE_H / 2, wz);
+      scene.add(pole);
+
+      // Arm — short horizontal bar extending over the road
+      const armDir = sx < 0 ? 1 : -1;  // point toward road centre
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.1, 0.1), poleMat);
+      arm.position.set(sx + armDir * 0.6, POLE_H, wz);
+      scene.add(arm);
+
+      // Light head
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.2, 0.45), headMat);
+      head.position.set(sx + armDir * 1.1, POLE_H - 0.15, wz);
+      scene.add(head);
+
+      z += SPACING;
     }
   }
 }
