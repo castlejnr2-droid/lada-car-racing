@@ -163,9 +163,15 @@ export function runReplay(canvas, hexSeed, {
         octx.drawImage(img, 0, 0);
         applyCheckerKey(oc, octx);
         const tex = new THREE.CanvasTexture(oc);
-        // flipY defaults to true — correct for canvas-sourced textures
-        for (const m of carMeshes) {
-          m.material.map = tex;
+        // Car 1 gets a horizontally-flipped clone so both sprites face the
+        // same direction (both noses pointing the same way).
+        const texFlipped = tex.clone();
+        texFlipped.repeat.set(-1, 1);
+        texFlipped.offset.set(1, 0);
+        texFlipped.needsUpdate = true;
+
+        for (const [i, m] of carMeshes.entries()) {
+          m.material.map = i % 2 === 1 ? texFlipped : tex;
           m.material.needsUpdate = true;
         }
         resolve();
