@@ -18,14 +18,12 @@ export default function Race() {
   const address = useTonAddress();
   const { send } = useTonSender();
   const replayStopRef = useRef(null);
-  const viewModeRef   = useRef('side');
   const [canvasEl, setCanvasEl] = useState(null);
   const canvasRef = useCallback((el) => setCanvasEl(el), []);
 
   const [race, setRace] = useState(null);
   const [busy, setBusy] = useState(false);
   const [replayDone, setReplayDone] = useState(false);
-  const [viewMode, setViewMode] = useState('side');
 
   useEffect(() => useBackButton(() => navigate('/')), [navigate]);
 
@@ -63,7 +61,6 @@ export default function Race() {
         setReplayDone(true);
         haptic.success();
       },
-      getViewMode: () => viewModeRef.current,
       playerNames: [
         race.player1_username || shortAddr(race.player1),
         race.player2_username || shortAddr(race.player2),
@@ -129,13 +126,6 @@ export default function Race() {
     }
   }
 
-  function toggleView() {
-    haptic.tap();
-    const next = viewModeRef.current === 'side' ? 'front' : 'side';
-    viewModeRef.current = next;
-    setViewMode(next);
-  }
-
   // ─── Render ───
   if (!race) return <div className="empty">Loading race…</div>;
 
@@ -157,13 +147,6 @@ export default function Race() {
         {race.state !== 'settled' && race.state !== 'active' && (
           <PhaseOverlay race={race} address={address} onCancel={handleCancel} cancelBusy={busy} />
         )}
-        <button
-          className="btn btn--ghost btn--small"
-          onClick={toggleView}
-          style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, opacity: 0.85 }}
-        >
-          {viewMode === 'side' ? 'Front View' : 'Side View'}
-        </button>
       </div>
     </div>
   );
