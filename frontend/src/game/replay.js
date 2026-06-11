@@ -466,46 +466,44 @@ function buildSky(scene) {
 }
 
 // ─── Roadside lamp posts ───────────────────────────────────────────────────────
-// Simple cylinder pole + glowing box head, one every 20 units along both sides.
+// 10 decorative posts per side, evenly spaced — geometry only, no per-post lights.
+// 5 shared PointLights are spread along the road instead for ambient road glow.
 function buildLampPosts(scene) {
-  const POLE_H    = 6;
-  const SIDE_X    = ROAD_W / 2 + 1.2;  // just outside kerb
-  const SPACING   = 20;
-  const poleMat   = new THREE.MeshStandardMaterial({ color: 0x555560, roughness: 0.7 });
-  const headMat   = new THREE.MeshStandardMaterial({
+  const POLE_H  = 6;
+  const SIDE_X  = ROAD_W / 2 + 1.2;
+  const COUNT   = 10;
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x555560, roughness: 0.7 });
+  const headMat = new THREE.MeshStandardMaterial({
     color: 0xffe8a0,
     emissive: new THREE.Color(0xffd060),
     emissiveIntensity: 1.8,
   });
 
   for (const sx of [-SIDE_X, SIDE_X]) {
-    let z = 0;
-    while (z < TRACK_LENGTH * 1.1) {
-      const wz = -z;  // world Z (road runs in -Z)
+    const armDir = sx < 0 ? 1 : -1;
+    for (let i = 0; i < COUNT; i++) {
+      const wz = -(i / (COUNT - 1)) * TRACK_LENGTH;
 
-      // Pole
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, POLE_H, 6), poleMat);
       pole.position.set(sx, POLE_H / 2, wz);
       scene.add(pole);
 
-      // Arm — short horizontal bar extending over the road
-      const armDir = sx < 0 ? 1 : -1;  // point toward road centre
       const arm = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.1, 0.1), poleMat);
       arm.position.set(sx + armDir * 0.6, POLE_H, wz);
       scene.add(arm);
 
-      // Light head
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.2, 0.45), headMat);
       head.position.set(sx + armDir * 1.1, POLE_H - 0.15, wz);
       scene.add(head);
-
-      // Point light — warm pool on road below
-      const pt = new THREE.PointLight(0xffcc44, 0.8, 15);
-      pt.position.set(sx + armDir * 1.1, POLE_H - 0.3, wz);
-      scene.add(pt);
-
-      z += SPACING;
     }
+  }
+
+  // 5 shared PointLights spread evenly along the road centre — replaces per-post lights
+  for (let i = 0; i < 5; i++) {
+    const wz = -(i / 4) * TRACK_LENGTH;
+    const pt = new THREE.PointLight(0xffcc44, 1.2, 80);
+    pt.position.set(0, POLE_H - 1, wz);
+    scene.add(pt);
   }
 }
 
