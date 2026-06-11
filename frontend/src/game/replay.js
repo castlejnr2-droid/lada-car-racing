@@ -97,8 +97,9 @@ export function runReplay(canvas, hexSeed, {
 
   // ── Main camera ───────────────────────────────────────────────────────────
   const camera  = new THREE.PerspectiveCamera(65, W / H, 0.1, TRACK_LENGTH * 2);
-  const camPos  = new THREE.Vector3(laneX[0] * 0.15, CAM_HEIGHT, -CAM_BACK);
-  const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.8, CAM_AHEAD);
+  // Cars move in -Z direction (into the scene); camera sits behind at +CAM_BACK
+  const camPos  = new THREE.Vector3(laneX[0] * 0.15, CAM_HEIGHT, CAM_BACK);
+  const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.8, -CAM_AHEAD);
   camera.position.copy(camPos);
   camera.lookAt(lookTgt);
 
@@ -194,17 +195,19 @@ export function runReplay(canvas, hexSeed, {
       const bounce = endFrame < 0
         ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.06
         : 0;
-      carMeshes[i].position.set(laneX[i], CAR_H / 2 + bounce, state.positions[i]);
+      carMeshes[i].position.set(laneX[i], CAR_H / 2 + bounce, -state.positions[i]);
     }
 
     // Smoothly follow car 0 from behind — update camera FIRST so billboard
     // quaternion copy uses this frame's orientation (not last frame's).
+    // Cars move in -Z; camera stays at car.z + CAM_BACK (positive offset = behind)
+    // and looks ahead to car.z - CAM_AHEAD (deeper into -Z).
     const pz = carMeshes[0].position.z;
     camPos.x += (laneX[0] * 0.15 - camPos.x) * CAM_LERP;
     camPos.y += (CAM_HEIGHT        - camPos.y) * CAM_LERP;
-    camPos.z += (pz - CAM_BACK     - camPos.z) * CAM_LERP;
+    camPos.z += (pz + CAM_BACK     - camPos.z) * CAM_LERP;
     camera.position.copy(camPos);
-    lookTgt.set(laneX[0] * 0.1, 0.8, pz + CAM_AHEAD);
+    lookTgt.set(laneX[0] * 0.1, 0.8, pz - CAM_AHEAD);
     camera.lookAt(lookTgt);
 
     // Billboard: copy camera quaternion so the plane's front face (+Z normal)
@@ -259,22 +262,25 @@ export function runReplay(canvas, hexSeed, {
 
 // ─── Road ──────────────────────────────────────────────────────────────────────
 function buildRoad(scene, N, laneX) {
-  const Z0  = -25;
-  const LEN = TRACK_LENGTH * 1.35;
+  // Road runs in -Z direction: from Z_START (behind start line) to Z_END (past finish)
+  const Z_START =  25;
+  const Z_END   = -(TRACK_LENGTH * 1.35);
+  const LEN     = Z_START - Z_END;
 
-  // Asphalt surface
+  // Asphalt surface — PlaneGeometry(W, H) rotated -90° around X:
+  // width→X, height→Z.  Center at midpoint of [Z_START, Z_END].
   const roadMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(ROAD_W, LEN),
     new THREE.MeshStandardMaterial({ color: 0x1c1e22, roughness: 0.95, metalness: 0 }),
   );
   roadMesh.rotation.x = -Math.PI / 2;
-  roadMesh.position.set(0, 0, Z0 + LEN / 2);
+  roadMesh.position.set(0, 0, (Z_START + Z_END) / 2);
   scene.add(roadMesh);
 
   // Road edges (solid kerb lines)
   const edgeMat = new THREE.LineBasicMaterial({ color: 0x8a8070 });
   for (const ex of [-ROAD_W / 2, ROAD_W / 2]) {
-    const pts = [new THREE.Vector3(ex, 0.03, Z0), new THREE.Vector3(ex, 0.03, Z0 + LEN)];
+    const pts = [new THREE.Vector3(ex, 0.03, Z_START), new THREE.Vector3(ex, 0.03, Z_END)];
     scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), edgeMat));
   }
 
@@ -282,7 +288,7 @@ function buildRoad(scene, N, laneX) {
   const dashMat = new THREE.LineDashedMaterial({ color: 0xc09030, dashSize: 8, gapSize: 6 });
   for (let i = 0; i < N - 1; i++) {
     const x   = (laneX[i] + laneX[i + 1]) / 2;
-    const pts = [new THREE.Vector3(x, 0.03, Z0), new THREE.Vector3(x, 0.03, Z0 + LEN)];
+    const pts = [new THREE.Vector3(x, 0.03, Z_START), new THREE.Vector3(x, 0.03, Z_END)];
     const geo  = new THREE.BufferGeometry().setFromPoints(pts);
     const line = new THREE.Line(geo, dashMat);
     line.computeLineDistances();
@@ -317,19 +323,19 @@ function buildFinishLine(scene) {
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
-  mesh.position.set(0, 0.015, TRACK_LENGTH);
+  mesh.position.set(0, 0.015, -TRACK_LENGTH);
   scene.add(mesh);
 
   // Vertical finish posts on each side
   const postMat = new THREE.MeshStandardMaterial({ color: 0xddcc88, emissive: 0xffd700, emissiveIntensity: 0.3 });
   for (const sx of [-ROAD_W / 2, ROAD_W / 2]) {
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.25, 6, 0.25), postMat);
-    post.position.set(sx, 3, TRACK_LENGTH);
+    post.position.set(sx, 3, -TRACK_LENGTH);
     scene.add(post);
   }
   // Crossbar
   const bar = new THREE.Mesh(new THREE.BoxGeometry(ROAD_W + 0.25, 0.25, 0.25), postMat);
-  bar.position.set(0, 6, TRACK_LENGTH);
+  bar.position.set(0, 6, -TRACK_LENGTH);
   scene.add(bar);
 
   return mesh;
@@ -349,7 +355,7 @@ function buildBuildings(scene, rng) {
       const xOff  = rng() * 5;
 
       const bx = side * (CLEARANCE + w / 2 + xOff);
-      const bz = z + depth / 2;
+      const bz = -(z + depth / 2);  // negate: buildings run in -Z direction
 
       const base            = BPAL[Math.floor(rng() * BPAL.length)];
       const emissiveIntens  = 0.06 + rng() * 0.26;
