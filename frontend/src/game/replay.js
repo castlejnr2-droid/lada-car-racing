@@ -85,15 +85,14 @@ export function runReplay(canvas, hexSeed, {
 
   // ── Main 3D scene ─────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
-  // No flat background — dusk sky sphere provides the colour
-  scene.fog = new THREE.Fog(0x0a0f1a, TRACK_LENGTH * 0.35, TRACK_LENGTH * 0.95);
+  // Light daytime fog — slight blue haze in distance
+  scene.fog = new THREE.Fog(0xc8e8f4, TRACK_LENGTH * 0.5, TRACK_LENGTH * 1.2);
 
-  // Lighting — warm dusk palette
-  scene.add(new THREE.AmbientLight(0xffd4a0, 1.2));
-  const sun = new THREE.DirectionalLight(0xff9040, 1.1);
-  sun.position.set(-8, 10, 20);
+  // Lighting — bright daytime
+  scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+  sun.position.set(50, 100, 50);
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0x3a2c5a, 0x1a100a, 0.8));
 
   // ── Dusk sky — large sphere with vertical gradient shader ─────────────────
   buildSky(scene);
@@ -169,7 +168,15 @@ export function runReplay(canvas, hexSeed, {
           resolve();
         },
         undefined,
-        (err) => { console.error('[replay] car.glb load failed:', err); resolve(); },
+        (err) => {
+          console.error('[replay] car.glb load failed — using box fallback:', err);
+          if (!cancelled) {
+            for (const [i, group] of carMeshes.entries()) {
+              buildBoxCar(group, CAR_TINTS[i % CAR_TINTS.length]);
+            }
+          }
+          resolve();
+        },
       );
     });
   }
@@ -265,6 +272,33 @@ export function runReplay(canvas, hexSeed, {
   };
 }
 
+// ─── Box car fallback ─────────────────────────────────────────────────────────
+// Used when car.glb fails to load (e.g. mobile network error).
+// Builds a simple body+roof+4-wheel car from primitives, in the car's tint colour.
+function buildBoxCar(group, tint) {
+  const base = tint ? tint.clone() : new THREE.Color(0xe8e0d0);
+  const bodyMat  = new THREE.MeshStandardMaterial({ color: base, roughness: 0.5, metalness: 0.2 });
+  const roofMat  = new THREE.MeshStandardMaterial({ color: base.clone().multiplyScalar(0.82), roughness: 0.5, metalness: 0.1 });
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+
+  const addMesh = (geo, mat, x, y, z) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.frustumCulled = false;
+    group.add(m);
+    return m;
+  };
+
+  addMesh(new THREE.BoxGeometry(1.8, 0.7, 3.6), bodyMat, 0, 0.55, 0);
+  addMesh(new THREE.BoxGeometry(1.4, 0.6, 1.8), roofMat, 0, 1.15, 0.2);
+
+  const wGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.22, 12);
+  for (const [wx, wz] of [[-0.9, 1.1], [0.9, 1.1], [-0.9, -1.1], [0.9, -1.1]]) {
+    const w = addMesh(wGeo, wheelMat, wx, 0.38, wz);
+    w.rotation.z = Math.PI / 2;
+  }
+}
+
 // ─── Road ──────────────────────────────────────────────────────────────────────
 function buildRoad(scene, N, laneX) {
   // Road runs in -Z direction: from Z_START (behind start line) to Z_END (past finish)
@@ -276,14 +310,14 @@ function buildRoad(scene, N, laneX) {
   // width→X, height→Z.  Center at midpoint of [Z_START, Z_END].
   const roadMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(ROAD_W, LEN),
-    new THREE.MeshStandardMaterial({ color: 0x1c1e22, roughness: 0.95, metalness: 0 }),
+    new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.95, metalness: 0 }),
   );
   roadMesh.rotation.x = -Math.PI / 2;
   roadMesh.position.set(0, 0, (Z_START + Z_END) / 2);
   scene.add(roadMesh);
 
   // Pavement / ground on both sides — dark grey Soviet concrete
-  const paveMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.98, metalness: 0 });
+  const paveMat = new THREE.MeshStandardMaterial({ color: 0x909090, roughness: 0.98, metalness: 0 });
   const PAVE_W = 120;
   for (const sx of [-1, 1]) {
     const pave = new THREE.Mesh(new THREE.PlaneGeometry(PAVE_W, LEN), paveMat);
@@ -377,9 +411,9 @@ function buildBuildings(scene, rng) {
       // Main block — grey Soviet concrete
       const geo = new THREE.BoxGeometry(w, h, depth);
       const mat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0x8a8a7a),
+        color: new THREE.Color(0xC8C0B0),
         emissive: new THREE.Color(0xffb030),
-        emissiveIntensity: windowIntens,
+        emissiveIntensity: windowIntens * 0.3,
         roughness: 0.88,
         metalness: 0,
       });
@@ -388,7 +422,7 @@ function buildBuildings(scene, rng) {
       scene.add(mesh);
 
       // Horizontal prefab panel seams every 3 units height
-      const seamMat = new THREE.MeshStandardMaterial({ color: 0x222220, roughness: 1 });
+      const seamMat = new THREE.MeshStandardMaterial({ color: 0x9a9080, roughness: 1 });
       for (let sy = 3; sy < h - 1; sy += 3) {
         const seam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.12, depth + 0.05), seamMat);
         seam.position.set(bx, sy, bz);
@@ -399,7 +433,7 @@ function buildBuildings(scene, rng) {
       if (rng() > 0.55) {
         const aW   = 0.25 + rng() * 0.35;
         const aH   = 3    + rng() * 8;
-        const aMat = new THREE.MeshStandardMaterial({ color: 0x131415, roughness: 1 });
+        const aMat = new THREE.MeshStandardMaterial({ color: 0x555550, roughness: 1 });
         const aMsh = new THREE.Mesh(new THREE.BoxGeometry(aW, aH, aW), aMat);
         aMsh.position.set(
           bx + (rng() - 0.5) * w  * 0.5,
@@ -434,9 +468,9 @@ function buildSky(scene) {
         void main() {
           // t = 0 at horizon (y=0), 1 at zenith
           float t = clamp(vWorldPos.y / 800.0, 0.0, 1.0);
-          // horizon: dark red-grey  →  zenith: deep steel blue
-          vec3 horizon = vec3(0.227, 0.082, 0.063);
-          vec3 zenith  = vec3(0.039, 0.059, 0.102);
+          // horizon: warm white #FFF5E0  →  zenith: sky blue #87CEEB
+          vec3 horizon = vec3(1.000, 0.961, 0.878);
+          vec3 zenith  = vec3(0.529, 0.808, 0.922);
           gl_FragColor = vec4(mix(horizon, zenith, pow(t, 0.55)), 1.0);
         }
       `,
