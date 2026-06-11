@@ -276,9 +276,10 @@ function buildRoad(scene, N, laneX) {
   for (let i = 0; i < N - 1; i++) {
     const x   = (laneX[i] + laneX[i + 1]) / 2;
     const pts = [new THREE.Vector3(x, 0.03, Z0), new THREE.Vector3(x, 0.03, Z0 + LEN)];
-    const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    geo.computeLineDistances();
-    scene.add(new THREE.Line(geo, dashMat));
+    const geo  = new THREE.BufferGeometry().setFromPoints(pts);
+    const line = new THREE.Line(geo, dashMat);
+    line.computeLineDistances();
+    scene.add(line);
   }
 }
 
