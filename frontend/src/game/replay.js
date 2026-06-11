@@ -68,7 +68,7 @@ export function runReplay(canvas, hexSeed, {
   // ── Renderer ──────────────────────────────────────────────────────────────
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(dpr);
-  renderer.setSize(W, H, false);   // false: keep CSS sizing from React
+  renderer.setSize(W, H, true);    // true: Three.js sets canvas.style.width/height explicitly
   renderer.autoClear = false;
 
   // ── Physics simulation ────────────────────────────────────────────────────

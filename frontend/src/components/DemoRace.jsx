@@ -29,81 +29,99 @@ export default function DemoRace() {
   const address     = useTonAddress();
   const [tcUI]      = useTonConnectUI();
 
-  const [canvasEl, setCanvasEl]   = useState(null);
-  const canvasRef = useCallback((el) => setCanvasEl(el), []);
+  const canvasRef  = useRef(null);
+  const stopRef    = useRef(null);
+  const timerRef   = useRef(null);
+  const simRef     = useRef(null);
+  const loopRef    = useRef(0);   // iteration counter (for badge)
 
-  const [seed, setSeed]           = useState(randomSeed);
   const [raceDone, setRaceDone]   = useState(false);
   const [winnerIdx, setWinnerIdx] = useState(0);
   const [loopCount, setLoopCount] = useState(0);
-
-  const stopRef  = useRef(null);
-  const simRef   = useRef(null);
-  const timerRef = useRef(null);
 
   // If the user connects a wallet while watching, send them home to play.
   useEffect(() => {
     if (address) navigate('/');
   }, [address, navigate]);
 
-  // (Re-)start the replay whenever the seed changes (each loop iteration).
+  // Cleanup on unmount
   useEffect(() => {
-    if (!canvasEl) return;
+    return () => {
+      stopRef.current?.();
+      clearTimeout(timerRef.current);
+    };
+  }, []);
 
-    // Tear down any running race
+  function startRace() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Tear down any running race first
     stopRef.current?.();
     clearTimeout(timerRef.current);
     setRaceDone(false);
     simRef.current = null;
 
-    stopRef.current = runReplay(canvasEl, seed, {
-      playerNames: PLAYER_NAMES,
-      onTick: (_tick, sim) => { simRef.current = sim; },
-      onComplete: () => {
-        const w = simRef.current?.winner ?? 0;
-        setWinnerIdx(w);
-        setRaceDone(true);
-        haptic.success();
-        // Auto-loop
-        timerRef.current = setTimeout(() => {
-          setSeed(randomSeed());
-          setLoopCount((n) => n + 1);
-        }, RESULT_HOLD_MS);
-      },
-    });
+    const seed = randomSeed();
+    try {
+      stopRef.current = runReplay(canvas, seed, {
+        playerNames: PLAYER_NAMES,
+        onTick: (_tick, sim) => { simRef.current = sim; },
+        onComplete: () => {
+          const w = simRef.current?.winner ?? 0;
+          setWinnerIdx(w);
+          setRaceDone(true);
+          haptic.success();
+          // Auto-loop after hold period
+          timerRef.current = setTimeout(() => {
+            loopRef.current += 1;
+            setLoopCount(loopRef.current);
+            startRace();
+          }, RESULT_HOLD_MS);
+        },
+      });
+    } catch (e) {
+      console.error('[DemoRace] runReplay failed:', e);
+    }
+  }
 
-    return () => {
-      stopRef.current?.();
-      clearTimeout(timerRef.current);
-    };
-  }, [canvasEl, seed]); // loopCount intentionally omitted — seed change drives re-run
+  // Canvas ref callback — delays one animation frame so flex layout is computed
+  const onCanvasReady = useCallback((el) => {
+    canvasRef.current = el;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => startRace());
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
-    <div className="race">
-      <div className="race__canvas-wrap">
-        <canvas ref={canvasRef} className="race__canvas" width="100" height="100" />
+    <div style={{ position: 'fixed', inset: 0, background: '#1e2633', overflow: 'hidden' }}>
+      <canvas
+        ref={onCanvasReady}
+        style={{ display: 'block', width: '100%', height: '100%' }}
+      />
 
-        {/* DEMO badge */}
-        <DemoBadge loopCount={loopCount} />
+      {/* DEMO badge */}
+      <DemoBadge loopCount={loopCount} />
 
-        {/* Back arrow */}
-        <button
-          className="btn btn--ghost btn--small"
-          onClick={() => { haptic.tap(); navigate('/'); }}
-          style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, opacity: 0.85 }}
-        >
-          ← Back
-        </button>
+      {/* Back arrow */}
+      <button
+        className="btn btn--ghost btn--small"
+        onClick={() => { haptic.tap(); navigate('/'); }}
+        style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, opacity: 0.85 }}
+      >
+        ← Back
+      </button>
 
-        {/* Winner overlay */}
-        {raceDone && (
-          <WinnerOverlay
-            winnerName={PLAYER_NAMES[winnerIdx]}
-            onPlayReal={() => tcUI.openModal()}
-            onBack={() => navigate('/')}
-          />
-        )}
-      </div>
+      {/* Winner overlay */}
+      {raceDone && (
+        <WinnerOverlay
+          winnerName={PLAYER_NAMES[winnerIdx]}
+          onPlayReal={() => tcUI.openModal()}
+          onBack={() => navigate('/')}
+        />
+      )}
     </div>
   );
 }
