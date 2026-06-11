@@ -103,7 +103,8 @@ export function runReplay(canvas, hexSeed, {
 
   // ── Main camera ───────────────────────────────────────────────────────────
   const camera  = new THREE.PerspectiveCamera(65, W / H, 0.1, TRACK_LENGTH * 2);
-  // Cars move in -Z direction (into the scene); camera sits behind at +CAM_BACK
+  // Cars move in -Z (into scene). Camera sits CAM_BACK behind car0 in Z.
+  // camPos.z is updated exactly each frame (no lerp) to prevent depth lag.
   const camPos  = new THREE.Vector3(laneX[0] * 0.15, CAM_HEIGHT, CAM_BACK);
   const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.8, -CAM_AHEAD);
   camera.position.copy(camPos);
@@ -221,24 +222,25 @@ export function runReplay(canvas, hexSeed, {
       );
     }
 
-    // Smoothly follow car 0 from behind — update camera FIRST so billboard
-    // quaternion copy uses this frame's orientation (not last frame's).
-    // Cars move in -Z; camera stays at car.z + CAM_BACK (positive offset = behind)
-    // and looks ahead to car.z - CAM_AHEAD (deeper into -Z).
+    // Smoothly follow car 0 from behind.
+    // Z tracks exactly (no lerp) so camera never lags and cars never drift
+    // sideways on-screen due to depth lag.  X/Y lerp gently for smoothness.
     const pz = carMeshes[0].position.z;
     camPos.x += (laneX[0] * 0.15 - camPos.x) * CAM_LERP;
     camPos.y += (CAM_HEIGHT        - camPos.y) * CAM_LERP;
-    camPos.z += (pz + CAM_BACK     - camPos.z) * CAM_LERP;
+    camPos.z  = pz + CAM_BACK;   // exact — no lag in Z
     camera.position.copy(camPos);
     lookTgt.set(laneX[0] * 0.1, 0.8, pz - CAM_AHEAD);
     camera.lookAt(lookTgt);
 
-    // Billboard: copy camera quaternion so the plane's front face (+Z normal)
-    // always faces the viewer.  quaternion.copy is correct here — lookAt makes
-    // the -Z axis point at the target which flips the UV-mapped face away from
-    // the camera.
+    // Yaw-only billboard: rotate each car mesh around Y so its +Z normal
+    // points toward the camera in the horizontal (XZ) plane.
+    // This keeps the card standing perfectly upright — no unwanted pitch/tilt
+    // from the camera's downward look angle.
     for (let i = 0; i < N; i++) {
-      carMeshes[i].quaternion.copy(camera.quaternion);
+      const dx = camera.position.x - carMeshes[i].position.x;
+      const dz = camera.position.z - carMeshes[i].position.z;
+      carMeshes[i].rotation.set(0, Math.atan2(dx, dz), 0);
     }
 
     // Finish line glow pulses during celebration
