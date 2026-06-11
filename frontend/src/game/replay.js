@@ -3,7 +3,7 @@
  *
  * Camera follows the player's car (index 0) from behind and above, looking
  * down the road toward the finish line.
- * Cars are billboard sprites (PlaneGeometry + pixel-art Lada texture).
+ * Cars are GLB 3D models (car.glb), cloned per player and tinted.
  * Road, finish line, and Soviet-brutalist buildings are 3D geometry.
  * A 2D canvas overlay (orthographic second pass) renders progress bar,
  * player name labels, and the countdown sequence.
@@ -13,15 +13,15 @@
  */
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const PHYS_PER_FRAME = 2;
 
-const ROAD_W = 14;      // total road width, world units
-const CAR_W  = 3.2;     // car billboard width, world units
-const CAR_H  = CAR_W * 0.45;
+const ROAD_W    = 14;   // total road width, world units
+const CAR_SCALE = 0.3;  // GLB model uniform scale
 
 const CAM_BACK   = 10;  // world units behind player
 const CAM_HEIGHT = 4.5;
@@ -37,13 +37,13 @@ const END_CELEBRATE = 50;
 const END_HOLD      = 20;
 const END_TOTAL     = END_DRIVE + END_CELEBRATE + END_HOLD;
 
-// Multiply-blend tints to tell cars apart (white = unchanged sprite)
-const TINTS = [
-  new THREE.Color(1.00, 1.00, 1.00),   // 0: original cream
-  new THREE.Color(1.80, 0.35, 0.25),   // 1: Soviet red
-  new THREE.Color(0.30, 1.60, 0.40),   // 2: green
-  new THREE.Color(0.70, 0.30, 1.80),   // 3: purple
-  new THREE.Color(1.80, 0.90, 0.15),   // 4: orange/gold
+// Per-car colour tints applied by traversing GLB materials (null = no change)
+const CAR_TINTS = [
+  null,                        // 0: original model colours
+  new THREE.Color(0xc8472b),   // 1: Soviet red
+  new THREE.Color(0x2d8a3a),   // 2: green
+  new THREE.Color(0x5a22bb),   // 3: purple
+  new THREE.Color(0xd97a10),   // 4: orange/gold
 ];
 
 // Progress-bar colours matching the tint palette (CSS strings for 2D canvas)
@@ -106,7 +106,7 @@ export function runReplay(canvas, hexSeed, {
   // Cars move in -Z (into scene). Camera sits CAM_BACK behind car0 in Z.
   // camPos.z is updated exactly each frame (no lerp) to prevent depth lag.
   const camPos  = new THREE.Vector3(laneX[0] * 0.15, CAM_HEIGHT, CAM_BACK);
-  const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.8, -CAM_AHEAD);
+  const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.5, -CAM_AHEAD);
   camera.position.copy(camPos);
   camera.lookAt(lookTgt);
 
@@ -122,20 +122,14 @@ export function runReplay(canvas, hexSeed, {
   const finishMesh = buildFinishLine(scene);
   buildBuildings(scene, rng);
 
-  // ── Car billboard meshes ──────────────────────────────────────────────────
+  // ── Car model containers — filled async by loadCarModel() ────────────────
+  // Using Groups so position updates work immediately; GLB content is added
+  // once the model file resolves.
   const carMeshes = Array.from({ length: N }, (_, i) => {
-    const geo = new THREE.PlaneGeometry(CAR_W, CAR_H);
-    const mat = new THREE.MeshBasicMaterial({
-      color: TINTS[i % TINTS.length],
-      transparent: true,
-      alphaTest: 0.15,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(laneX[i], CAR_H / 2, 0);
-    scene.add(mesh);
-    return mesh;
+    const group = new THREE.Group();
+    group.position.set(laneX[i], 0, 0);
+    scene.add(group);
+    return group;
   });
 
   // ── Confetti particle system ──────────────────────────────────────────────
@@ -148,36 +142,37 @@ export function runReplay(canvas, hexSeed, {
   let cancelled  = false;
   let rafId      = null;
 
-  // ── Sprite loader ─────────────────────────────────────────────────────────
-  // Colour-key the checkerboard background, then assign as a shared texture
-  // to all car meshes.  The loop starts only after the sprite is ready so the
-  // fallback tinted-colour cars never appear on screen.
-  function loadAndApplySprite() {
+  // ── GLB car model loader ──────────────────────────────────────────────────
+  // Loads car.glb once, clones it per car, applies per-car colour tint, then
+  // starts the render loop.  Resolves even on error so the race still runs.
+  function loadCarModel() {
     return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        if (cancelled) { resolve(); return; }
-        const oc = document.createElement('canvas');
-        oc.width = img.width; oc.height = img.height;
-        const octx = oc.getContext('2d');
-        octx.drawImage(img, 0, 0);
-        applyCheckerKey(oc, octx);
-        const tex = new THREE.CanvasTexture(oc);
-        // Car 1 gets a horizontally-flipped clone so both sprites face the
-        // same direction (both noses pointing the same way).
-        const texFlipped = tex.clone();
-        texFlipped.repeat.set(-1, 1);
-        texFlipped.offset.set(1, 0);
-        texFlipped.needsUpdate = true;
+      new GLTFLoader().load(
+        '/car.glb',
+        (gltf) => {
+          if (cancelled) { resolve(); return; }
+          for (const [i, group] of carMeshes.entries()) {
+            const model = gltf.scene.clone(true);
+            model.scale.setScalar(CAR_SCALE);
+            // Nose points in -Z so car drives down the road
+            model.rotation.y = Math.PI;
 
-        for (const [i, m] of carMeshes.entries()) {
-          m.material.map = i % 2 === 1 ? texFlipped : tex;
-          m.material.needsUpdate = true;
-        }
-        resolve();
-      };
-      img.onerror = (e) => { console.error('[replay] sprite load failed:', e); resolve(); };
-      img.src = '/lada-pixel.jpg';
+            const tint = CAR_TINTS[i % CAR_TINTS.length];
+            if (tint) {
+              model.traverse((child) => {
+                if (child.isMesh && child.material) {
+                  child.material = child.material.clone();
+                  child.material.color.multiply(tint);
+                }
+              });
+            }
+            group.add(model);
+          }
+          resolve();
+        },
+        undefined,
+        (err) => { console.error('[replay] car.glb load failed:', err); resolve(); },
+      );
     });
   }
 
@@ -206,12 +201,12 @@ export function runReplay(canvas, hexSeed, {
     // Update car world positions — X is fixed per lane, Z is race progress
     for (let i = 0; i < N; i++) {
       const bounce = endFrame < 0
-        ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.06
+        ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.04
         : 0;
       const progress = state.positions[i];   // scalar 0 → TRACK_LENGTH
-      carMeshes[i].position.x = laneX[i];           // FIXED lane offset, never changes
-      carMeshes[i].position.y = CAR_H / 2 + bounce; // fixed height above road
-      carMeshes[i].position.z = -progress;           // race moves in -Z direction
+      carMeshes[i].position.x = laneX[i];   // FIXED lane offset, never changes
+      carMeshes[i].position.y = bounce;      // small vertical bounce on rough road
+      carMeshes[i].position.z = -progress;  // race moves in -Z direction
     }
 
     // Throttled per-frame diagnostic (every 90 frames)
@@ -236,18 +231,8 @@ export function runReplay(canvas, hexSeed, {
     camPos.y += (CAM_HEIGHT        - camPos.y) * CAM_LERP;
     camPos.z  = pz + CAM_BACK;   // exact — no lag in Z
     camera.position.copy(camPos);
-    lookTgt.set(laneX[0] * 0.1, 0.8, pz - CAM_AHEAD);
+    lookTgt.set(laneX[0] * 0.1, 0.5, pz - CAM_AHEAD);
     camera.lookAt(lookTgt);
-
-    // Yaw-only billboard: rotate each car mesh around Y so its +Z normal
-    // points toward the camera in the horizontal (XZ) plane.
-    // This keeps the card standing perfectly upright — no unwanted pitch/tilt
-    // from the camera's downward look angle.
-    for (let i = 0; i < N; i++) {
-      const dx = camera.position.x - carMeshes[i].position.x;
-      const dz = camera.position.z - carMeshes[i].position.z;
-      carMeshes[i].rotation.set(0, Math.atan2(dx, dz), 0);
-    }
 
     // Finish line glow pulses during celebration
     finishMesh.material.emissiveIntensity = endFrame >= END_DRIVE ? 2.0 : 0.4;
@@ -278,8 +263,8 @@ export function runReplay(canvas, hexSeed, {
     rafId = requestAnimationFrame(loop);
   }
 
-  // Start loop once sprite is ready (mirrors original — no fallback flash)
-  loadAndApplySprite().then(() => {
+  // Start loop once GLB is loaded (race still runs even if load fails)
+  loadCarModel().then(() => {
     if (!cancelled) rafId = requestAnimationFrame(loop);
   });
 
@@ -598,38 +583,3 @@ function animateConfetti(data, winnerPos, celebFrame) {
   data.points.geometry.attributes.position.needsUpdate = true;
 }
 
-// ─── Checkerboard colour-key ───────────────────────────────────────────────────
-// Same algorithm as the original 2D version: samples all four edges to detect
-// both tile colours, then zeros the alpha of matching pixels + hard border strip.
-function applyCheckerKey(canvas, ctx) {
-  const W = canvas.width, H = canvas.height;
-  const id = ctx.getImageData(0, 0, W, H);
-  const d  = id.data;
-
-  const sp = (x, y) => { const i = (y * W + x) * 4; return [d[i], d[i+1], d[i+2]]; };
-  const bgMap = new Map();
-  const add   = (r, g, b) => {
-    const k = `${Math.round(r/20)},${Math.round(g/20)},${Math.round(b/20)}`;
-    if (!bgMap.has(k)) bgMap.set(k, [r, g, b]);
-  };
-  const S = 20;
-  for (let i = 0; i < S; i++) {
-    add(...sp(i, 0));  add(...sp(W-1-i, 0));
-    add(...sp(0, H-1-i));  add(...sp(W-1-i, H-1-i));
-  }
-  const bgs = [...bgMap.values()];
-  const BORDER = 3, TOL = 30;
-
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = (y * W + x) * 4;
-      if (x < BORDER || x >= W-BORDER || y < BORDER || y >= H-BORDER) { d[i+3] = 0; continue; }
-      for (const [br, bg, bb] of bgs) {
-        if (Math.abs(d[i]-br) <= TOL && Math.abs(d[i+1]-bg) <= TOL && Math.abs(d[i+2]-bb) <= TOL) {
-          d[i+3] = 0; break;
-        }
-      }
-    }
-  }
-  ctx.putImageData(id, 0, 0);
-}
