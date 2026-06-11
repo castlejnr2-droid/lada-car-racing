@@ -50,8 +50,6 @@ const CAR_TINTS = [
 // Progress-bar colours matching the tint palette (CSS strings for 2D canvas)
 const HUD_COLORS = ['#e8e0d0', '#c8472b', '#2d8a3a', '#5a22bb', '#d97a10'];
 
-// Soviet concrete palette (hex) for building faces
-const BPAL = [0x1e2226, 0x1c1d1f, 0x20201e, 0x1a1e24, 0x22211f, 0x1d2123];
 
 // ─── Public entry ──────────────────────────────────────────────────────────────
 export function runReplay(canvas, hexSeed, {
@@ -118,14 +116,16 @@ export function runReplay(canvas, hexSeed, {
   const finishMesh = buildFinishLine(scene);
   buildBuildings(scene, rng);
   buildLampPosts(scene);
+  buildSovietExtras(scene);
 
-  // ── Car model containers — filled async by loadCarModel() ────────────────
-  // Using Groups so position updates work immediately; GLB content is added
-  // once the model file resolves.
+  // ── Car model containers ─────────────────────────────────────────────────
+  // Box cars are added immediately so cars are always visible.
+  // GLB models load in the background and swap in once ready.
   const carMeshes = Array.from({ length: N }, (_, i) => {
     const group = new THREE.Group();
     group.position.set(laneX[i], 0, 0);
     scene.add(group);
+    buildBoxCar(group, CAR_TINTS[i % CAR_TINTS.length]);
     return group;
   });
 
@@ -139,46 +139,38 @@ export function runReplay(canvas, hexSeed, {
   let cancelled  = false;
   let rafId      = null;
 
-  // ── GLB car model loader ──────────────────────────────────────────────────
-  // Loads car.glb once, clones it per car, applies per-car colour tint, then
-  // starts the render loop.  Resolves even on error so the race still runs.
-  function loadCarModel() {
-    return new Promise((resolve) => {
-      new GLTFLoader().load(
-        '/car.glb',
-        (gltf) => {
-          if (cancelled) { resolve(); return; }
-          for (const [i, group] of carMeshes.entries()) {
-            const model = gltf.scene.clone(true);
-            model.scale.setScalar(CAR_SCALE);
-            model.rotation.y = Math.PI; // nose toward -Z
-
-            const tint = CAR_TINTS[i % CAR_TINTS.length];
-            model.traverse((child) => {
-              if (child.isMesh) {
-                child.frustumCulled = false; // prevent mid-race disappearing
-                if (child.material) {
-                  child.material = child.material.clone();
-                  if (tint) child.material.color.multiply(tint);
-                }
+  // ── GLB car model loader (background) ────────────────────────────────────
+  // Box cars already show. When GLB arrives, clear each group and swap in the
+  // real model. Silently ignored if load fails — box cars remain.
+  function loadGlbInBackground() {
+    new GLTFLoader().load(
+      '/car.glb',
+      (gltf) => {
+        if (cancelled) return;
+        for (const [i, group] of carMeshes.entries()) {
+          // Remove existing box car children
+          while (group.children.length) group.remove(group.children[0]);
+          const model = gltf.scene.clone(true);
+          model.scale.setScalar(CAR_SCALE);
+          model.rotation.y = Math.PI;
+          const tint = CAR_TINTS[i % CAR_TINTS.length];
+          model.traverse((child) => {
+            if (child.isMesh) {
+              child.frustumCulled = false;
+              if (child.material) {
+                child.material = child.material.clone();
+                if (tint) child.material.color.multiply(tint);
               }
-            });
-            group.add(model);
-          }
-          resolve();
-        },
-        undefined,
-        (err) => {
-          console.error('[replay] car.glb load failed — using box fallback:', err);
-          if (!cancelled) {
-            for (const [i, group] of carMeshes.entries()) {
-              buildBoxCar(group, CAR_TINTS[i % CAR_TINTS.length]);
             }
-          }
-          resolve();
-        },
-      );
-    });
+          });
+          group.add(model);
+        }
+      },
+      undefined,
+      (err) => {
+        console.error('[replay] car.glb failed to load — box cars will remain:', err);
+      },
+    );
   }
 
   // ── Main loop ─────────────────────────────────────────────────────────────
@@ -259,10 +251,10 @@ export function runReplay(canvas, hexSeed, {
     rafId = requestAnimationFrame(loop);
   }
 
-  // Start loop once GLB is loaded (race still runs even if load fails)
-  loadCarModel().then(() => {
-    if (!cancelled) rafId = requestAnimationFrame(loop);
-  });
+  // Start render loop immediately (box cars are already in scene)
+  // GLB loads in background and swaps in when ready
+  rafId = requestAnimationFrame(loop);
+  loadGlbInBackground();
 
   return () => {
     cancelled = true;
@@ -289,12 +281,15 @@ function buildBoxCar(group, tint) {
     return m;
   };
 
-  addMesh(new THREE.BoxGeometry(1.8, 0.7, 3.6), bodyMat, 0, 0.55, 0);
-  addMesh(new THREE.BoxGeometry(1.4, 0.6, 1.8), roofMat, 0, 1.15, 0.2);
+  // body: 2.5w x 0.8h x 1.2d  (y offset = 0.3 wheels + half body height)
+  addMesh(new THREE.BoxGeometry(2.5, 0.8, 1.2), bodyMat, 0, 0.7, 0);
+  // roof: 1.5w x 0.5h x 0.8d
+  addMesh(new THREE.BoxGeometry(1.5, 0.5, 0.8), roofMat, 0, 1.35, 0.05);
 
-  const wGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.22, 12);
-  for (const [wx, wz] of [[-0.9, 1.1], [0.9, 1.1], [-0.9, -1.1], [0.9, -1.1]]) {
-    const w = addMesh(wGeo, wheelMat, wx, 0.38, wz);
+  // wheels: radius 0.3, height 0.2
+  const wGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 12);
+  for (const [wx, wz] of [[-1.2, 0.38], [1.2, 0.38], [-1.2, -0.38], [1.2, -0.38]]) {
+    const w = addMesh(wGeo, wheelMat, wx, 0.3, wz);
     w.rotation.z = Math.PI / 2;
   }
 }
@@ -326,8 +321,8 @@ function buildRoad(scene, N, laneX) {
     scene.add(pave);
   }
 
-  // Road edges (solid kerb lines)
-  const edgeMat = new THREE.LineBasicMaterial({ color: 0x8a8070 });
+  // Road edges — solid white lines
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff });
   for (const ex of [-ROAD_W / 2, ROAD_W / 2]) {
     const pts = [new THREE.Vector3(ex, 0.03, Z_START), new THREE.Vector3(ex, 0.03, Z_END)];
     scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), edgeMat));
@@ -408,10 +403,10 @@ function buildBuildings(scene, rng) {
 
       const windowIntens = 0.08 + rng() * 0.22;
 
-      // Main block — grey Soviet concrete
+      // Main block — Khrushchyovka pale yellow
       const geo = new THREE.BoxGeometry(w, h, depth);
       const mat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0xC8C0B0),
+        color: new THREE.Color(0xE8DDB5),
         emissive: new THREE.Color(0xffb030),
         emissiveIntensity: windowIntens * 0.3,
         roughness: 0.88,
@@ -421,8 +416,8 @@ function buildBuildings(scene, rng) {
       mesh.position.set(bx, h / 2, bz);
       scene.add(mesh);
 
-      // Horizontal prefab panel seams every 3 units height
-      const seamMat = new THREE.MeshStandardMaterial({ color: 0x9a9080, roughness: 1 });
+      // Horizontal prefab panel seams every 3 units height — dark concrete joint
+      const seamMat = new THREE.MeshStandardMaterial({ color: 0x8a8060, roughness: 1 });
       for (let sy = 3; sy < h - 1; sy += 3) {
         const seam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.12, depth + 0.05), seamMat);
         seam.position.set(bx, sy, bz);
@@ -448,9 +443,75 @@ function buildBuildings(scene, rng) {
   }
 }
 
-// ─── Dusk sky sphere ──────────────────────────────────────────────────────────
+// ─── Soviet extras: red star billboard + bare boulevard trees ─────────────────
+function buildSovietExtras(scene) {
+  // ── Red Soviet star on a pole, visible at start ──────────────────────────
+  const POLE_Z  = -8;   // just past the start line
+  const POLE_H  = 10;
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x555560, roughness: 0.8 });
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, POLE_H, 8), poleMat);
+  pole.position.set(ROAD_W / 2 + 3, POLE_H / 2, POLE_Z);
+  scene.add(pole);
+
+  // Star billboard: canvas texture of ★ on red background
+  const sc = document.createElement('canvas');
+  sc.width  = 128;
+  sc.height = 128;
+  const sctx = sc.getContext('2d');
+  sctx.fillStyle = '#cc1111';
+  sctx.fillRect(0, 0, 128, 128);
+  sctx.fillStyle = '#ffdd00';
+  sctx.font = 'bold 96px serif';
+  sctx.textAlign = 'center';
+  sctx.textBaseline = 'middle';
+  sctx.fillText('★', 64, 68);
+  const starTex = new THREE.CanvasTexture(sc);
+  const starMat = new THREE.MeshStandardMaterial({
+    map: starTex,
+    emissive: new THREE.Color(0xff2200),
+    emissiveIntensity: 0.6,
+    roughness: 0.5,
+  });
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2), starMat);
+  sign.position.set(ROAD_W / 2 + 3, POLE_H + 1.1, POLE_Z);
+  scene.add(sign);
+  // Back face so it's visible from both sides
+  const signBack = sign.clone();
+  signBack.rotation.y = Math.PI;
+  scene.add(signBack);
+
+  // ── Bare boulevard trees between lamp posts ───────────────────────────────
+  const TREE_SIDE_X = ROAD_W / 2 + 2.8;
+  const TREE_COUNT  = 9;
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a3a1a, roughness: 0.95 });
+  const crownMat = new THREE.MeshStandardMaterial({ color: 0x3a3a30, roughness: 1 });
+
+  for (const sx of [-TREE_SIDE_X, TREE_SIDE_X]) {
+    for (let i = 0; i < TREE_COUNT; i++) {
+      // Offset slightly from lamp posts (posts at i/9 * TRACK_LENGTH, trees at midpoints)
+      const wz = -((i + 0.5) / TREE_COUNT) * TRACK_LENGTH;
+      const trunkH = 4.5 + Math.random() * 1.5;
+
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.18, trunkH, 7),
+        trunkMat,
+      );
+      trunk.position.set(sx, trunkH / 2, wz);
+      scene.add(trunk);
+
+      const crown = new THREE.Mesh(
+        new THREE.SphereGeometry(0.9 + Math.random() * 0.5, 7, 6),
+        crownMat,
+      );
+      crown.position.set(sx, trunkH + 0.6, wz);
+      scene.add(crown);
+    }
+  }
+}
+
+// ─── Daytime sky sphere ───────────────────────────────────────────────────────
 // Large sphere rendered on the inside with a ShaderMaterial that blends from
-// deep blue/purple at the top to warm orange/amber near the horizon.
+// sky blue at the top to warm white at the horizon.
 function buildSky(scene) {
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(TRACK_LENGTH * 1.8, 32, 16),
