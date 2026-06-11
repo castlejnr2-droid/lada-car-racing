@@ -77,6 +77,12 @@ export function runReplay(canvas, hexSeed, {
   const sim   = simulate(track, rng);
   const N     = sim.history[0].positions.length;
 
+  // ── Diagnostic: dump first few ticks so we can verify axis mapping ────────
+  console.log('[replay] N (cars):', N, '  history length:', sim.history.length);
+  console.log('[replay] tick 0 positions:', sim.history[0].positions);
+  console.log('[replay] tick 1 positions:', sim.history[1]?.positions);
+  console.log('[replay] final tick positions:', sim.history[sim.history.length - 1]?.positions);
+
   // Lane X positions: evenly spread across ROAD_W
   const laneX = Array.from({ length: N }, (_, i) =>
     ((i + 0.5) / N - 0.5) * ROAD_W * 0.75,
@@ -190,12 +196,29 @@ export function runReplay(canvas, hexSeed, {
 
     const state = sim.history[physTick];
 
-    // Update car world positions (billboard orientation applied after camera update)
+    // Update car world positions — X is fixed per lane, Z is race progress
     for (let i = 0; i < N; i++) {
       const bounce = endFrame < 0
         ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.06
         : 0;
-      carMeshes[i].position.set(laneX[i], CAR_H / 2 + bounce, -state.positions[i]);
+      const progress = state.positions[i];   // scalar 0 → TRACK_LENGTH
+      carMeshes[i].position.x = laneX[i];           // FIXED lane offset, never changes
+      carMeshes[i].position.y = CAR_H / 2 + bounce; // fixed height above road
+      carMeshes[i].position.z = -progress;           // race moves in -Z direction
+    }
+
+    // Throttled per-frame diagnostic (every 90 frames)
+    if (frameCount % 90 === 1) {
+      console.log(
+        `[replay] frame=${frameCount} physTick=${physTick}`,
+        'raw positions:', state.positions.map(p => p.toFixed(1)),
+        '  car0 world xyz:', carMeshes[0].position.x.toFixed(2),
+        carMeshes[0].position.y.toFixed(2),
+        carMeshes[0].position.z.toFixed(2),
+        '  cam xyz:', camera.position.x.toFixed(2),
+        camera.position.y.toFixed(2),
+        camera.position.z.toFixed(2),
+      );
     }
 
     // Smoothly follow car 0 from behind — update camera FIRST so billboard
