@@ -50,3 +50,6 @@ pgdata/
 .cache/
 .parcel-cache/
 .next/
+
+# Local Netlify folder
+.netlify
