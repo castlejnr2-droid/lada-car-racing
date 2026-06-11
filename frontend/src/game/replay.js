@@ -162,7 +162,7 @@ export function runReplay(canvas, hexSeed, {
         }
         resolve();
       };
-      img.onerror = () => resolve();   // continue without sprite
+      img.onerror = (e) => { console.error('[replay] sprite load failed:', e); resolve(); };
       img.src = '/lada-pixel.jpg';
     });
   }
@@ -189,17 +189,16 @@ export function runReplay(canvas, hexSeed, {
 
     const state = sim.history[physTick];
 
-    // Update car positions + billboard orientation
+    // Update car world positions (billboard orientation applied after camera update)
     for (let i = 0; i < N; i++) {
       const bounce = endFrame < 0
         ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.06
         : 0;
       carMeshes[i].position.set(laneX[i], CAR_H / 2 + bounce, state.positions[i]);
-      // Billboard: local +Z faces the camera so the texture is always visible
-      carMeshes[i].lookAt(camera.position);
     }
 
-    // Smoothly follow car 0 from behind
+    // Smoothly follow car 0 from behind — update camera FIRST so billboard
+    // quaternion copy uses this frame's orientation (not last frame's).
     const pz = carMeshes[0].position.z;
     camPos.x += (laneX[0] * 0.15 - camPos.x) * CAM_LERP;
     camPos.y += (CAM_HEIGHT        - camPos.y) * CAM_LERP;
@@ -207,6 +206,14 @@ export function runReplay(canvas, hexSeed, {
     camera.position.copy(camPos);
     lookTgt.set(laneX[0] * 0.1, 0.8, pz + CAM_AHEAD);
     camera.lookAt(lookTgt);
+
+    // Billboard: copy camera quaternion so the plane's front face (+Z normal)
+    // always faces the viewer.  quaternion.copy is correct here — lookAt makes
+    // the -Z axis point at the target which flips the UV-mapped face away from
+    // the camera.
+    for (let i = 0; i < N; i++) {
+      carMeshes[i].quaternion.copy(camera.quaternion);
+    }
 
     // Finish line glow pulses during celebration
     finishMesh.material.emissiveIntensity = endFrame >= END_DRIVE ? 2.0 : 0.4;
