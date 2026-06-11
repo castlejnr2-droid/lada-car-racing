@@ -119,14 +119,7 @@ export default function PlayTab({ balance = null }) {
   }
 
   if (!address) {
-    return (
-      <div className="empty">
-        <p style={{ marginBottom: 16 }}>
-          Connect your TON wallet to start racing.
-        </p>
-        <TonConnectButton />
-      </div>
-    );
+    return <NoWalletView onDemo={() => navigate('/demo')} />;
   }
 
   return (
@@ -215,6 +208,57 @@ export default function PlayTab({ balance = null }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── No-wallet landing view ────────────────────────────────────────────────────
+// Shows when the user hasn't connected a wallet yet.
+// Counts down 3 s then auto-navigates to the demo race.
+function NoWalletView({ onDemo }) {
+  const [secs, setSecs] = useState(3);
+
+  // Auto-start after 3 seconds
+  useEffect(() => {
+    const timer = setTimeout(onDemo, 3000);
+    return () => clearTimeout(timer);
+  }, [onDemo]);
+
+  // Decrement display counter every second
+  useEffect(() => {
+    if (secs <= 0) return;
+    const t = setTimeout(() => setSecs((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [secs]);
+
+  return (
+    <div className="empty" style={{ paddingTop: 32 }}>
+      <p style={{ marginBottom: 20 }}>
+        Connect your TON wallet to start racing.
+      </p>
+
+      <TonConnectButton />
+
+      <div style={{
+        margin: '22px 0 14px',
+        color: 'var(--fg-muted)',
+        fontSize: 13,
+        letterSpacing: '0.04em',
+      }}>
+        — or —
+      </div>
+
+      <button
+        className="btn"
+        style={{ maxWidth: 220, marginBottom: 10 }}
+        onClick={onDemo}
+      >
+        🏁 &nbsp;Watch Demo
+      </button>
+
+      <p style={{ color: 'var(--fg-muted)', fontSize: 12 }}>
+        Demo starts in {secs}s…
+      </p>
     </div>
   );
 }
