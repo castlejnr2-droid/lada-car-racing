@@ -18,7 +18,7 @@ import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-const PHYS_PER_FRAME = 4;   // higher = slower race (was 2; 4 = ~40% slower)
+const PHYS_PER_FRAME = 2;   // physics ticks per render frame
 
 const ROAD_W    = 14;   // total road width, world units
 const CAR_SCALE = 0.8;  // GLB model uniform scale
@@ -92,7 +92,7 @@ export function runReplay(canvas, hexSeed, {
   // ── Main 3D scene ─────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
   // No flat background — dusk sky sphere provides the colour
-  scene.fog = new THREE.Fog(0x1a1220, TRACK_LENGTH * 0.35, TRACK_LENGTH * 0.95);
+  scene.fog = new THREE.Fog(0x0a0f1a, TRACK_LENGTH * 0.35, TRACK_LENGTH * 0.95);
 
   // Lighting — warm dusk palette
   scene.add(new THREE.AmbientLight(0xffd4a0, 1.2));
@@ -158,18 +158,18 @@ export function runReplay(canvas, hexSeed, {
           for (const [i, group] of carMeshes.entries()) {
             const model = gltf.scene.clone(true);
             model.scale.setScalar(CAR_SCALE);
-            // Nose points in -Z so car drives down the road
-            model.rotation.y = Math.PI;
+            model.rotation.y = Math.PI; // nose toward -Z
 
             const tint = CAR_TINTS[i % CAR_TINTS.length];
-            if (tint) {
-              model.traverse((child) => {
-                if (child.isMesh && child.material) {
+            model.traverse((child) => {
+              if (child.isMesh) {
+                child.frustumCulled = false; // prevent mid-race disappearing
+                if (child.material) {
                   child.material = child.material.clone();
-                  child.material.color.multiply(tint);
+                  if (tint) child.material.color.multiply(tint);
                 }
-              });
-            }
+              }
+            });
             group.add(model);
           }
           resolve();
@@ -227,15 +227,18 @@ export function runReplay(canvas, hexSeed, {
       );
     }
 
-    // Smoothly follow car 0 from behind.
-    // Z tracks exactly (no lerp) so camera never lags and cars never drift
-    // sideways on-screen due to depth lag.  X/Y lerp gently for smoothness.
-    const pz = carMeshes[0].position.z;
-    camPos.x += (laneX[0] * 0.15 - camPos.x) * CAM_LERP;
-    camPos.y += (CAM_HEIGHT        - camPos.y) * CAM_LERP;
-    camPos.z  = pz + CAM_BACK;   // exact — no lag in Z
+    // Follow the leading car (furthest in -Z = most negative Z).
+    // Z tracks exactly to prevent sideways drift from lag.
+    let leadIdx = 0;
+    for (let i = 1; i < N; i++) {
+      if (carMeshes[i].position.z < carMeshes[leadIdx].position.z) leadIdx = i;
+    }
+    const pz = carMeshes[leadIdx].position.z;
+    camPos.x += (laneX[leadIdx] * 0.15 - camPos.x) * CAM_LERP;
+    camPos.y += (CAM_HEIGHT             - camPos.y) * CAM_LERP;
+    camPos.z  = pz + CAM_BACK;
     camera.position.copy(camPos);
-    lookTgt.set(laneX[0] * 0.1, 0.3, pz - CAM_AHEAD);
+    lookTgt.set(laneX[leadIdx] * 0.1, 0.3, pz - CAM_AHEAD);
     camera.lookAt(lookTgt);
 
     // Finish line glow pulses during celebration
@@ -296,6 +299,16 @@ function buildRoad(scene, N, laneX) {
   roadMesh.rotation.x = -Math.PI / 2;
   roadMesh.position.set(0, 0, (Z_START + Z_END) / 2);
   scene.add(roadMesh);
+
+  // Pavement / ground on both sides — dark grey Soviet concrete
+  const paveMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.98, metalness: 0 });
+  const PAVE_W = 120;
+  for (const sx of [-1, 1]) {
+    const pave = new THREE.Mesh(new THREE.PlaneGeometry(PAVE_W, LEN), paveMat);
+    pave.rotation.x = -Math.PI / 2;
+    pave.position.set(sx * (ROAD_W / 2 + PAVE_W / 2), -0.01, (Z_START + Z_END) / 2);
+    scene.add(pave);
+  }
 
   // Road edges (solid kerb lines)
   const edgeMat = new THREE.LineBasicMaterial({ color: 0x8a8070 });
@@ -377,20 +390,28 @@ function buildBuildings(scene, rng) {
       const bx = side * (CLEARANCE + w / 2 + xOff);
       const bz = -(z + depth / 2);
 
-      const base           = BPAL[Math.floor(rng() * BPAL.length)];
-      const windowIntens   = 0.15 + rng() * 0.55;  // warm amber window glow
+      const windowIntens = 0.08 + rng() * 0.22;
 
+      // Main block — grey Soviet concrete
       const geo = new THREE.BoxGeometry(w, h, depth);
       const mat = new THREE.MeshStandardMaterial({
-        color: base,
-        emissive: new THREE.Color(0xe07820),  // warm amber
+        color: new THREE.Color(0x8a8a7a),
+        emissive: new THREE.Color(0xffb030),
         emissiveIntensity: windowIntens,
-        roughness: 0.92,
+        roughness: 0.88,
         metalness: 0,
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(bx, h / 2, bz);
       scene.add(mesh);
+
+      // Horizontal prefab panel seams every 3 units height
+      const seamMat = new THREE.MeshStandardMaterial({ color: 0x222220, roughness: 1 });
+      for (let sy = 3; sy < h - 1; sy += 3) {
+        const seam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.12, depth + 0.05), seamMat);
+        seam.position.set(bx, sy, bz);
+        scene.add(seam);
+      }
 
       // Rooftop silhouettes: antenna or water tower stub
       if (rng() > 0.55) {
@@ -431,9 +452,9 @@ function buildSky(scene) {
         void main() {
           // t = 0 at horizon (y=0), 1 at zenith
           float t = clamp(vWorldPos.y / 800.0, 0.0, 1.0);
-          // horizon: warm amber/orange  →  zenith: deep indigo/purple
-          vec3 horizon = vec3(0.72, 0.28, 0.08);
-          vec3 zenith  = vec3(0.06, 0.04, 0.18);
+          // horizon: dark red-grey  →  zenith: deep steel blue
+          vec3 horizon = vec3(0.227, 0.082, 0.063);
+          vec3 zenith  = vec3(0.039, 0.059, 0.102);
           gl_FragColor = vec4(mix(horizon, zenith, pow(t, 0.55)), 1.0);
         }
       `,
@@ -477,6 +498,11 @@ function buildLampPosts(scene) {
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.2, 0.45), headMat);
       head.position.set(sx + armDir * 1.1, POLE_H - 0.15, wz);
       scene.add(head);
+
+      // Point light — warm pool on road below
+      const pt = new THREE.PointLight(0xffcc44, 0.8, 15);
+      pt.position.set(sx + armDir * 1.1, POLE_H - 0.3, wz);
+      scene.add(pt);
 
       z += SPACING;
     }

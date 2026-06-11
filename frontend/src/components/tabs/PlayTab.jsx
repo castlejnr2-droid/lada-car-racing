@@ -216,11 +216,11 @@ export default function PlayTab({ balance = null }) {
 // Shows when the user hasn't connected a wallet yet.
 // Counts down 3 s then auto-navigates to the demo race.
 function NoWalletView({ onDemo }) {
-  const [secs, setSecs] = useState(3);
+  const [secs, setSecs] = useState(30);
 
-  // Auto-start after 3 seconds
+  // Auto-start after 30 seconds
   useEffect(() => {
-    const timer = setTimeout(onDemo, 3000);
+    const timer = setTimeout(onDemo, 30000);
     return () => clearTimeout(timer);
   }, [onDemo]);
 
