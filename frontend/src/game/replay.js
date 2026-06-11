@@ -22,7 +22,7 @@ import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 const PHYS_PER_FRAME = 2;   // physics ticks per render frame
 
 const ROAD_W    = 14;   // total road width, world units
-const CAR_SCALE = 0.8;  // GLB model uniform scale
+const CAR_SCALE = 1.5;  // GLB model uniform scale
 const CAR_H     = 2.0;  // approximate car height for HUD label offset
 
 const CAM_BACK   = 6;   // world units behind player (closer)
@@ -120,9 +120,10 @@ export function runReplay(canvas, hexSeed, {
   buildSovietExtras(scene);
 
   // ── Car model containers ─────────────────────────────────────────────────
+  // Start at z=-10 so cars are in front of the camera immediately
   const carMeshes = Array.from({ length: N }, (_, i) => {
     const group = new THREE.Group();
-    group.position.set(laneX[i], 0, 0);
+    group.position.set(laneX[i], 0, -10);
     scene.add(group);
     return group;
   });
@@ -160,14 +161,23 @@ export function runReplay(canvas, hexSeed, {
           gltf.scene.traverse((child) => { if (child.isMesh) meshCount++; });
           console.log('[replay] mesh count in GLB:', meshCount);
 
+          // Log bounding box of raw GLB to understand native model size
+          const tmpBox = new THREE.Box3().setFromObject(gltf.scene);
+          const tmpSize = new THREE.Vector3();
+          tmpBox.getSize(tmpSize);
+          console.log('[replay] GLB native bounding box size:', tmpSize.x.toFixed(3), tmpSize.y.toFixed(3), tmpSize.z.toFixed(3));
+
           for (const [i, group] of carMeshes.entries()) {
             const model = gltf.scene.clone(true);
             model.scale.setScalar(CAR_SCALE);
             model.rotation.y = Math.PI;
             model.position.y = 0.5;
+            model.frustumCulled = false;
             const tint = CAR_TINTS[i % CAR_TINTS.length];
+            let clonedMeshes = 0;
             model.traverse((child) => {
               if (child.isMesh) {
+                clonedMeshes++;
                 child.frustumCulled = false;
                 if (child.material) {
                   child.material = child.material.clone();
@@ -176,8 +186,14 @@ export function runReplay(canvas, hexSeed, {
               }
             });
             group.add(model);
-            console.log('[replay] car', i, 'placed at', group.position.x.toFixed(2), group.position.y.toFixed(2), group.position.z.toFixed(2));
+            console.log('[replay] car', i,
+              '| group xyz:', group.position.x.toFixed(2), group.position.y.toFixed(2), group.position.z.toFixed(2),
+              '| model y:', model.position.y.toFixed(2),
+              '| scale:', model.scale.x.toFixed(2),
+              '| cloned meshes:', clonedMeshes,
+            );
           }
+          console.log('[replay] camera pos:', camera.position.x.toFixed(2), camera.position.y.toFixed(2), camera.position.z.toFixed(2));
           resolve();
         },
         (xhr) => {
