@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
@@ -137,16 +138,33 @@ export function runReplay(canvas, hexSeed, {
   let rafId      = null;
 
   // ── GLB car model loader ──────────────────────────────────────────────────
+  const GLB_URL = 'https://cdn.jsdelivr.net/gh/castlejnr2-droid/lada-car-racing@main/frontend/public/car.glb';
+
   function loadCarModel() {
     return new Promise((resolve) => {
-      new GLTFLoader().load(
-        'https://raw.githubusercontent.com/castlejnr2-droid/lada-car-racing/main/frontend/public/car.glb',
+      const dracoLoader = new DRACOLoader();
+      dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+
+      const loader = new GLTFLoader();
+      loader.setDRACOLoader(dracoLoader);
+
+      console.log('[replay] loading car.glb from:', GLB_URL);
+
+      loader.load(
+        GLB_URL,
         (gltf) => {
+          console.log('[replay] car.glb loaded. scene children:', gltf.scene.children.length, gltf.scene.children.map(c => c.name || c.type));
           if (cancelled) { resolve(); return; }
+
+          let meshCount = 0;
+          gltf.scene.traverse((child) => { if (child.isMesh) meshCount++; });
+          console.log('[replay] mesh count in GLB:', meshCount);
+
           for (const [i, group] of carMeshes.entries()) {
             const model = gltf.scene.clone(true);
             model.scale.setScalar(CAR_SCALE);
             model.rotation.y = Math.PI;
+            model.position.y = 0.5;
             const tint = CAR_TINTS[i % CAR_TINTS.length];
             model.traverse((child) => {
               if (child.isMesh) {
@@ -158,12 +176,25 @@ export function runReplay(canvas, hexSeed, {
               }
             });
             group.add(model);
+            console.log('[replay] car', i, 'placed at', group.position.x.toFixed(2), group.position.y.toFixed(2), group.position.z.toFixed(2));
           }
           resolve();
         },
-        undefined,
+        (xhr) => {
+          if (xhr.total) console.log('[replay] car.glb progress:', Math.round(xhr.loaded / xhr.total * 100) + '%');
+        },
         (err) => {
-          console.error('[replay] car.glb failed to load:', err);
+          console.error('[replay] car.glb FAILED to load:', err);
+          // Spawn bright red box at each car position so we can confirm scene is working
+          if (!cancelled) {
+            const fallbackMat = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.4 });
+            for (const group of carMeshes) {
+              const box = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.0, 3.2), fallbackMat);
+              box.position.y = 0.5;
+              box.frustumCulled = false;
+              group.add(box);
+            }
+          }
           resolve();
         },
       );
