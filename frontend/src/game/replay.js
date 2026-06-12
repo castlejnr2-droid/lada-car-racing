@@ -67,23 +67,53 @@ const DUST_MAX_BURSTS = 4;     // concurrent burst slots (2 cars + margin)
 const DUST_LIFE       = 24;    // render frames per dust particle
 const TINT_STRENGTH   = 0.60;  // lerp weight toward tint hue (0=keep orig, 1=pure tint)
 
-// ─── Scene theme — day (default) ──────────────────────────────────────────────
-// All lighting, fog, and sky values live here so Phase 3 can swap the whole
-// look by passing a different theme object without touching any other code.
-const SCENE_THEME = {
-  ambientColor:     0xdde8f0,
-  ambientIntensity: 4.0,
-  sunColor:         0xfff4e0,
-  sunIntensity:     5.0,
-  fogColor:         0xc0ccd8,
-  fogNear:          TRACK_LENGTH * 0.45,
-  fogFar:           TRACK_LENGTH * 1.1,
-  skyHorizon:       [0.82, 0.86, 0.90],   // vec3 for sky shader
-  skyZenith:        [0.45, 0.62, 0.80],
-  groundColor:      0x5a7a35,             // grass shoulder
-  earthColor:       0x7a6e52,             // outer dirt
-  roadColor:        0x525252,             // asphalt
+// ─── Atmosphere themes (Phase 3) ──────────────────────────────────────────────
+// Index derived deterministically from hexSeed so both players always see the
+// same theme: themeIdx = parseInt(hexSeed.slice(0,8), 16) % 3.
+// ALL cosmetic — never touches simulation constants or outcomes.
+const THEME_DAY = {
+  ambientColor: 0xdde8f0,  ambientIntensity: 4.0,
+  sunColor:     0xfff4e0,  sunIntensity:     5.0,
+  fogColor:     0xc0ccd8,  fogNear: TRACK_LENGTH * 0.45, fogFar: TRACK_LENGTH * 1.1,
+  skyHorizon:   [0.82, 0.86, 0.90],
+  skyZenith:    [0.45, 0.62, 0.80],
+  groundColor:    0x5a7a35,  // grass
+  earthColor:     0x7a6e52,  // dirt
+  roadColor:      0x525252,  // asphalt
+  treeTrunkColor: 0xf0ece8,  // birch bark white
+  treeLeafColor:  0x4a8828,  // summer green
+  cloudColor:     0xfafcff,  cloudOpacity: 0.86,
 };
+
+const THEME_DUSK = {
+  ambientColor: 0xf0d0a0,  ambientIntensity: 3.5,
+  sunColor:     0xff7820,  sunIntensity:     6.5,
+  fogColor:     0xd87040,  fogNear: TRACK_LENGTH * 0.30, fogFar: TRACK_LENGTH * 0.85,
+  skyHorizon:   [0.98, 0.55, 0.18],  // deep amber-orange horizon
+  skyZenith:    [0.22, 0.18, 0.42],  // indigo-purple zenith
+  groundColor:    0x4a6022,  // dusk-shadowed grass
+  earthColor:     0x6a5838,  // dusk-shadowed dirt
+  roadColor:      0x3c3830,  // near-black wet asphalt
+  treeTrunkColor: 0xd0b888,  // warm amber tint
+  treeLeafColor:  0x1e3c08,  // silhouette dark foliage
+  cloudColor:     0xff8844,  cloudOpacity: 0.65,
+};
+
+const THEME_SNOW = {
+  ambientColor: 0xd4dff0,  ambientIntensity: 3.2,
+  sunColor:     0xe8f0ff,  sunIntensity:     3.5,
+  fogColor:     0xccd4e0,  fogNear: TRACK_LENGTH * 0.28, fogFar: TRACK_LENGTH * 0.80,
+  skyHorizon:   [0.84, 0.88, 0.94],  // pale wintry blue-white
+  skyZenith:    [0.55, 0.65, 0.80],  // muted steel blue
+  groundColor:    0xe4eaf2,  // snow-covered ground
+  earthColor:     0xd8dde8,  // snow outer strip
+  roadColor:      0x5a6068,  // slushy dark tarmac
+  treeTrunkColor: 0xe8e4e2,  // pale birch
+  treeLeafColor:  0xdde4ee,  // bare/snow-dusted branches
+  cloudColor:     0xe8ecf4,  cloudOpacity: 0.94,
+};
+
+const THEMES = [THEME_DAY, THEME_DUSK, THEME_SNOW];
 
 
 // ─── Public entry ──────────────────────────────────────────────────────────────
@@ -147,24 +177,24 @@ export function runReplay(canvas, hexSeed, {
     '| maxTextures:', renderer.capabilities.maxTextures,
     '| canvas px:', canvas.width, 'x', canvas.height);
 
-  // ── On-screen error overlay ───────────────────────────────────────────────
-  // Telegram WebView has no accessible DevTools console on most phones.
-  // Any caught error gets displayed as a fixed red panel so the user can read
-  // it back verbatim. Auto-removes after 90 s.
+  // ── On-screen error reporter ─────────────────────────────────────────────
+  // Pre-created and hidden. Zero cost unless a subsystem throws — then it
+  // becomes visible and appends each error as a separate block.
+  // Removed from DOM when runReplay is cleaned up (see return function below).
+  const _errEl = document.createElement('div');
+  Object.assign(_errEl.style, {
+    display: 'none',
+    position: 'fixed', top: '0', left: '0', right: '0', bottom: '0',
+    zIndex: '99999', background: 'rgba(18,0,0,0.94)', color: '#ff7070',
+    fontFamily: 'monospace', fontSize: '12px', lineHeight: '1.45',
+    padding: '14px', whiteSpace: 'pre-wrap', overflowY: 'auto',
+    pointerEvents: 'none',
+  });
+  document.body.appendChild(_errEl);
+
   function showErrorOverlay(msg) {
-    try {
-      const el = document.createElement('div');
-      Object.assign(el.style, {
-        position: 'fixed', top: '0', left: '0', right: '0', bottom: '0',
-        zIndex: '99999', background: 'rgba(18,0,0,0.94)', color: '#ff7070',
-        fontFamily: 'monospace', fontSize: '12px', lineHeight: '1.45',
-        padding: '14px', whiteSpace: 'pre-wrap', overflowY: 'auto',
-        pointerEvents: 'none',
-      });
-      el.textContent = '[replay error]\n' + msg;
-      document.body.appendChild(el);
-      setTimeout(() => { try { document.body.removeChild(el); } catch (_) {} }, 90000);
-    } catch (_) {}
+    _errEl.textContent += (_errEl.textContent ? '\n\n' : '') + '[replay error]\n' + msg;
+    _errEl.style.display = 'block';
   }
 
   // ── Physics simulation ────────────────────────────────────────────────────
@@ -179,27 +209,33 @@ export function runReplay(canvas, hexSeed, {
   );
   console.log('[replay] laneX computed:', laneX.map((x, i) => `car${i}=x${x.toFixed(3)}`).join(', '));
 
+  // ── Theme selection (Phase 3) ─────────────────────────────────────────────
+  // Derived from the first 32 bits of the seed so both players always agree.
+  // Purely cosmetic — simulation is never touched.
+  const themeIdx = parseInt(hexSeed.slice(0, 8), 16) % 3;
+  const theme    = THEMES[themeIdx];
+  console.log('[replay] theme:', ['day', 'dusk', 'snow'][themeIdx],
+    '| seed prefix:', hexSeed.slice(0, 8));
+
   // ── Main 3D scene ─────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
-  // Atmospheric haze — values from SCENE_THEME so Phase 3 can swap cleanly
-  scene.fog = new THREE.Fog(SCENE_THEME.fogColor, SCENE_THEME.fogNear, SCENE_THEME.fogFar);
+  scene.fog = new THREE.Fog(theme.fogColor, theme.fogNear, theme.fogFar);
 
   // Lighting
-  scene.add(new THREE.AmbientLight(SCENE_THEME.ambientColor, SCENE_THEME.ambientIntensity));
-  const sun = new THREE.DirectionalLight(SCENE_THEME.sunColor, SCENE_THEME.sunIntensity);
+  scene.add(new THREE.AmbientLight(theme.ambientColor, theme.ambientIntensity));
+  const sun = new THREE.DirectionalLight(theme.sunColor, theme.sunIntensity);
   sun.position.set(30, 80, 40);
   scene.add(sun);
 
   // ── Sky with drifting cloud layers (returned for per-frame animation) ─────
   let clouds = [];
   try {
-    clouds = buildSky(scene);
+    clouds = buildSky(scene, theme);
     console.log('[replay] buildSky OK — cloud layers:', clouds.length);
   } catch (e) {
     console.error('[replay] buildSky FAILED:', e);
     showErrorOverlay('buildSky failed:\n' + (e?.stack || String(e)));
-    // Fallback: plain sky colour so scene is not pitch black
-    scene.background = new THREE.Color(0xc0ccd8);
+    scene.background = new THREE.Color(theme.fogColor);
   }
 
   // ── Main camera ───────────────────────────────────────────────────────────
@@ -222,9 +258,9 @@ export function runReplay(canvas, hexSeed, {
   // Each subsystem is individually guarded so one failure never prevents the
   // others from running. The overlay shows exactly which one threw.
   const _subsystems = [
-    ['buildRoad',          () => buildRoad(scene, N, laneX, track)],
+    ['buildRoad',          () => buildRoad(scene, N, laneX, track, theme)],
     ['buildPanelki',       () => buildPanelki(scene, rng)],
-    ['buildBirchTrees',    () => buildBirchTrees(scene, rng)],
+    ['buildBirchTrees',    () => buildBirchTrees(scene, rng, theme)],
     ['buildLampPosts',     () => buildLampPosts(scene)],
     ['buildRoadFurniture', () => buildRoadFurniture(scene)],
     ['buildSkyline',       () => buildSkyline(scene)],
@@ -585,29 +621,30 @@ export function runReplay(canvas, hexSeed, {
     if (rafId) cancelAnimationFrame(rafId);
     canvas.style.imageRendering = '';
     renderer.dispose();
+    try { document.body.removeChild(_errEl); } catch (_) {}
   };
 }
 
 // ─── Road ──────────────────────────────────────────────────────────────────────
 // Asphalt + grass shoulders + edge lines + pothole decals at exact sim positions.
-function buildRoad(scene, N, laneX, track) {
+function buildRoad(scene, N, laneX, track, theme) {
   const Z_START =  25;
   const Z_END   = -(TRACK_LENGTH * 1.35);
   const LEN     = Z_START - Z_END;
   const midZ    = (Z_START + Z_END) / 2;
 
-  // Asphalt, grass, earth — colors from SCENE_THEME
+  // Asphalt, grass, earth — colors from active theme
   const roadMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(ROAD_W, LEN),
-    new THREE.MeshLambertMaterial({ color: SCENE_THEME.roadColor }),
+    new THREE.MeshLambertMaterial({ color: theme.roadColor }),
   );
   roadMesh.rotation.x = -Math.PI / 2;
   roadMesh.position.set(0, 0, midZ);
   scene.add(roadMesh);
 
   const GRASS_W = 7;
-  const grassMat = new THREE.MeshLambertMaterial({ color: SCENE_THEME.groundColor });
-  const earthMat = new THREE.MeshLambertMaterial({ color: SCENE_THEME.earthColor });
+  const grassMat = new THREE.MeshLambertMaterial({ color: theme.groundColor });
+  const earthMat = new THREE.MeshLambertMaterial({ color: theme.earthColor });
   const EARTH_W  = 110;
   for (const sx of [-1, 1]) {
     const grass = new THREE.Mesh(new THREE.PlaneGeometry(GRASS_W, LEN), grassMat);
@@ -766,7 +803,7 @@ function buildPanelki(scene, rng) {
 // ─── Birch trees ───────────────────────────────────────────────────────────────
 // Two InstancedMesh objects (trunks + leaf puffs) = 2 draw calls for all trees.
 // Bark rings removed — invisible at race distance and expensive per-tree.
-function buildBirchTrees(scene, rng) {
+function buildBirchTrees(scene, rng, theme) {
   const TREE_X   = ROAD_W / 2 + 4.0;
   const COUNT    = 22;                           // trees per side
   const SIDES    = 2;
@@ -776,7 +813,7 @@ function buildBirchTrees(scene, rng) {
 
   const trunkInst = new THREE.InstancedMesh(
     new THREE.CylinderGeometry(0.20, 0.28, 1, 7),  // height=1, scaled per instance
-    new THREE.MeshLambertMaterial({ color: 0xf0ece8 }),
+    new THREE.MeshLambertMaterial({ color: theme.treeTrunkColor }),
     TOTAL_TREES,
   );
   trunkInst.frustumCulled = false;
@@ -784,7 +821,7 @@ function buildBirchTrees(scene, rng) {
 
   const leafInst = new THREE.InstancedMesh(
     new THREE.SphereGeometry(1, 6, 5),             // r=1, scaled per instance
-    new THREE.MeshLambertMaterial({ color: 0x4a8828 }),
+    new THREE.MeshLambertMaterial({ color: theme.treeLeafColor }),
     TOTAL_PUFFS,
   );
   leafInst.frustumCulled = false;
@@ -1038,10 +1075,10 @@ function buildRoadFurniture(scene) {
 // Returns an array of { mesh, speed } for the main loop to drift laterally.
 // Three cloud layers drift at different speeds for a parallax depth effect.
 // All puffs per layer are merged into one geometry — 3 draw calls for all clouds.
-function buildSky(scene) {
-  // Gradient sky sphere — colours from SCENE_THEME for Phase 3 swappability
-  const [hr, hg, hb] = SCENE_THEME.skyHorizon;
-  const [zr, zg, zb] = SCENE_THEME.skyZenith;
+function buildSky(scene, theme) {
+  // Gradient sky sphere — colours from active theme
+  const [hr, hg, hb] = theme.skyHorizon;
+  const [zr, zg, zb] = theme.skyZenith;
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(TRACK_LENGTH * 1.8, 18, 10),
     new THREE.ShaderMaterial({
@@ -1075,7 +1112,7 @@ function buildSky(scene) {
   // Cloud layers — 3 groups merged separately, drifting at different speeds.
   // Using Math.random() (not seeded rng) so clouds vary each session cosmetically.
   const cloudMat = new THREE.MeshLambertMaterial({
-    color: 0xfafcff, transparent: true, opacity: 0.86,
+    color: theme.cloudColor, transparent: true, opacity: theme.cloudOpacity,
   });
 
   // Each layer: array of cluster centres + drift speed

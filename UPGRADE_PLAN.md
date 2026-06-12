@@ -153,8 +153,8 @@ Result at Phase 0: 5000 seeds, 0 mismatches, 50.3%/49.7% split (fair).
 - **Vibration fix**: switched from `frameCount % PHYS_PER_FRAME` alpha to `playhead` accumulator
   that only advances when `racing = !cdActive && endFrame < 0`
 
-### Phase 2 — Environment — DONE, awaiting device test
-**Commit**: `cd4a98b`
+### Phase 2 — Environment — DONE, device-verified
+**Commits**: `cd4a98b` (main), `10b1f57` (debug instrumentation), `7187350` (road fix)
 - Panelki: merged geometry per texture variant, 6 draw calls total, seams baked into texture
 - Birch trees: InstancedMesh, 2 draw calls
 - Lamp posts: merged geometry + additive glow discs, ~8 draw calls
@@ -164,15 +164,28 @@ Result at Phase 0: 5000 seeds, 0 mismatches, 50.3%/49.7% split (fair).
 - SCENE_THEME structure for Phase 3 theme swapping
 - `buildSky` returns cloud mesh array for per-frame drift animation in main loop
 
-### Phase 3 — Atmosphere Themes — NOT STARTED
-**Goal**: 3 cosmetic-only themes derived deterministically from the race seed (`seed % 3`).
-Both players must see the same theme (same seed = same theme).
+**Bug found on device (blank scene)**: `Object.assign(mesh, { rotation: ..., position: ... })`
+throws `TypeError: Cannot assign to read only property 'rotation'` in strict-mode ES modules.
+`rotation`, `position`, `scale`, `quaternion` on `Object3D` are non-writable — always use
+`.rotation.x = ...` or `.rotation.set(...)` / `.position.set(...)` directly.
 
-**Themes**:
-1. **Day** (current default) — existing SCENE_THEME values
-2. **Dusk/orange** — warm amber sun, orange fog, orange-pink sky gradient, slightly darker ground
-3. **Overcast snow** — desaturated ambient, white ground plane replacing grass/earth, gray-blue fog,
-   snow sky gradient, remove green from trees (bare branches or snow-covered)
+**Workflow rule added**: always open the desktop browser console and confirm zero JS errors
+before pushing a device test build. Would have caught the Object.assign throw immediately.
+
+**Error overlay**: pre-created hidden `<div>` (zero cost when silent), visible only on throw,
+removed on replay cleanup. Stays in until a clean device run is confirmed.
+
+### Phase 3 — Atmosphere Themes — DONE, awaiting device test
+**Commits**: (this session)
+- `THEME_DAY`, `THEME_DUSK`, `THEME_SNOW` objects replace the single `SCENE_THEME` constant
+- Theme index derived deterministically: `parseInt(hexSeed.slice(0,8), 16) % 3`
+- Both players always see the same theme (same seed = same theme index)
+- `buildSky(scene, theme)` — sky gradient + cloud color/opacity from theme
+- `buildRoad(scene, N, laneX, track, theme)` — asphalt, grass, earth from theme
+- `buildBirchTrees(scene, rng, theme)` — trunk + leaf color from theme
+  - Day: green leaves; Dusk: near-black silhouette foliage; Snow: pale blue-white bare branches
+- Fog, ambient light, sun color/intensity all swap with theme
+- Zero simulation impact — physics.js untouched
 
 **Implementation**:
 - Derive theme index in `runReplay`: `const themeIdx = parseInt(hexSeed.slice(0,8), 16) % 3`
