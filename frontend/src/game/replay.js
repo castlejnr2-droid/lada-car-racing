@@ -244,6 +244,47 @@ export function runReplay(canvas, hexSeed, {
     && Math.abs(finishPlayheads[0] - finishPlayheads[1]) < SLOWMO_TICKS;
   if (isCloseFinish) console.log('[replay] close finish — slow-mo will engage in final stretch');
 
+  // ── Finish choreography pre-computation ───────────────────────────────────
+  // The sim determines the winner by highest final overshoot (each car freezes
+  // at its crossing position). A car can therefore cross the finish line first
+  // in wall-clock ticks yet still lose because its overshoot was smaller.
+  //
+  // Old fix (broken): freeze loser at TRACK_LENGTH - 0.5 until winner crosses,
+  // then release — causes a dead-stop followed by a teleport.
+  //
+  // New fix: smoothly remap the loser's displayed position over the final 18%
+  // of the track so it visually crosses at (winner's crossing time + MIN_GAP)
+  // instead of its raw crossing time. Linear remap = constant remapped velocity,
+  // which reads as a gentle, continuous deceleration. Everything is keyed to
+  // `playhead` (the same time base used by photo-finish slow-mo) so there is
+  // no mismatch between the remap and the slow-motion stretching.
+  const FINISH_BLEND_DIST = TRACK_LENGTH * 0.18;   // 216 units — blend zone depth
+  const finishBlendStart  = TRACK_LENGTH - FINISH_BLEND_DIST;   // 984
+
+  // For cars that would cross before the winner, push their visual crossing time
+  // just past the winner's. Cars that already cross after the winner are untouched.
+  const MIN_VIS_CROSS_GAP = 4;   // playhead ticks between visual crossings
+  const visFinishTick = finishPlayheads.map((fp, i) => {
+    if (i === sim.winner) return fp;
+    return Math.max(fp, finishPlayheads[sim.winner] + MIN_VIS_CROSS_GAP);
+  });
+
+  // Sub-tick blend zone entry point (same interpolation method as finishPlayheads)
+  const blendZoneEntryTick = Array.from({ length: N }, (_, i) => {
+    for (let t = 0; t < sim.history.length; t++) {
+      if (sim.history[t].positions[i] >= finishBlendStart) {
+        if (t === 0) return 0;
+        const prev = sim.history[t - 1].positions[i];
+        const here = sim.history[t].positions[i];
+        return (t - 1) + (finishBlendStart - prev) / (here - prev);
+      }
+    }
+    return sim.history.length - 1;
+  });
+  console.log('[replay] visFinishTick:',
+    visFinishTick.map((t, i) => `car${i}=${t.toFixed(2)}`).join(' '),
+    '| blendEntry:', blendZoneEntryTick.map((t, i) => `car${i}=${t.toFixed(2)}`).join(' '));
+
   // Lane X positions: evenly spread within LANE_SPREAD (±0.6 for 2 cars)
   const laneX = Array.from({ length: N }, (_, i) =>
     ((i + 0.5) / N - 0.5) * LANE_SPREAD,
@@ -563,42 +604,45 @@ export function runReplay(canvas, hexSeed, {
       currentFov += (_fovTarget - currentFov) * FOV_LERP_BACK;
     }
 
-    // ── Position correction (presentation layer only) ─────────────────────────
-    // Raw sim positions can place a non-winner car further past the finish line
-    // than the declared winner (winner won by biggest overshoot, not first crossing).
-    // Fix: hold non-winner cars at the line until the winner crosses, then animate
-    // all cars to rank-ordered resting positions during the end sequence.
-    // Physics, winner determination, and onTick data are completely untouched.
-
-    // Pass 1 — raw interpolated positions for this frame
+    // Raw interpolated positions for this frame
     const rawPos = Array.from({ length: N }, (_, i) =>
       curr.positions[i] + (next.positions[i] - curr.positions[i]) * alpha,
     );
-    const winnerRaw = rawPos[sim.winner];
 
-    // Pass 2 — build displayPos with visual corrections
-    const displayPos = [...rawPos];
+    // ── Finish choreography ───────────────────────────────────────────────────
+    // For any car whose visFinishTick differs from its raw finishPlayheads (i.e.
+    // a loser that would cross before the winner), remap its displayed position
+    // inside the blend zone so it crosses TRACK_LENGTH at visFinishTick[i].
+    // Outside the blend zone, or for cars with no remap needed, rawPos is used.
+    // Time base: `playhead` throughout — consistent with slow-mo stretching.
+    const displayPos = rawPos.map((rp, i) => {
+      if (!racing) return rp;                                   // end-sequence below
+      if (visFinishTick[i] === finishPlayheads[i]) return rp;  // no remap needed
+      if (rp < finishBlendStart) return rp;                    // before blend zone
 
-    if (racing) {
-      // Hold a non-winner car at the finish line while the winner hasn't crossed yet.
-      // This covers the 1-2 frame window when a small-overshoot car would otherwise
-      // appear to cross before the declared winner.
-      for (let i = 0; i < N; i++) {
-        if (i !== sim.winner && displayPos[i] >= TRACK_LENGTH && winnerRaw < TRACK_LENGTH) {
-          displayPos[i] = TRACK_LENGTH - 0.5;
-        }
+      const duration = visFinishTick[i] - blendZoneEntryTick[i];
+      if (duration <= 0) return rp;                            // degenerate guard
+
+      const elapsed = playhead - blendZoneEntryTick[i];
+      const frac    = Math.max(0, Math.min(1, elapsed / duration));
+
+      if (frac < 1.0) {
+        // Approaching the line: constant remapped velocity within blend zone.
+        // The loser visibly decelerates slightly relative to its raw speed —
+        // looks natural, no freeze, no position discontinuity.
+        return finishBlendStart + frac * FINISH_BLEND_DIST;
       }
-    }
+      // Past visual crossing: resume from TRACK_LENGTH with raw overshoot progress
+      return TRACK_LENGTH + Math.max(0, rp - TRACK_LENGTH);
+    });
 
     if (endFrame >= 0) {
-      // Animate all cars to rank-ordered resting positions over END_DRIVE frames.
-      // Winner always rests furthest past the line; non-winners stay clearly behind.
+      // Animate cars to rank-ordered resting positions over END_DRIVE frames.
       const t    = Math.min(1, endFrame / END_DRIVE);
-      const ease = t * t * (3 - 2 * t);   // smoothstep
+      const ease = t * t * (3 - 2 * t);
       for (let i = 0; i < N; i++) {
-        const isWinner     = i === sim.winner;
-        const rawOvershoot = Math.max(0, rawPos[i] - TRACK_LENGTH);
-        // Winner: at least 40 units past; non-winner: at most 18 units past
+        const isWinner        = i === sim.winner;
+        const rawOvershoot    = Math.max(0, rawPos[i] - TRACK_LENGTH);
         const targetOvershoot = isWinner
           ? Math.max(rawOvershoot, 40)
           : Math.min(rawOvershoot, 18);
