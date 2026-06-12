@@ -205,11 +205,17 @@ export function runReplay(canvas, hexSeed, {
   const confetti = makeConfettiSystem(scene);
 
   // ── Animation state ───────────────────────────────────────────────────────
-  let physTick   = 0;
-  let frameCount = 0;
-  let endFrame   = -1;
-  let cancelled  = false;
-  let rafId      = null;
+  // playhead is the single source of truth for playback position.
+  // It is a float in [0, history.length - 1] that advances by 1/PHYS_PER_FRAME
+  // ONLY while the race is actively playing (not during countdown or end sequence).
+  // physTick and alpha are both derived from it, so they are always 0 during
+  // the countdown and frozen at the final tick during the end sequence — no shaking.
+  let playhead      = 0;
+  let lastOnTickIdx = 0;  // tracks the last integer tick boundary for onTick() calls
+  let frameCount    = 0;
+  let endFrame      = -1;
+  let cancelled     = false;
+  let rafId         = null;
 
   // ── GLB car model loader ──────────────────────────────────────────────────
   const GLB_URL = 'https://cdn.jsdelivr.net/gh/castlejnr2-droid/lada-car-racing@main/frontend/public/car.glb';
@@ -331,27 +337,38 @@ export function runReplay(canvas, hexSeed, {
     frameCount++;
 
     const cdActive = frameCount <= COUNTDOWN_TOTAL;
+    const racing   = !cdActive && endFrame < 0;
 
-    // Advance physics
-    if (!cdActive) {
-      if (endFrame < 0) {
-        if (frameCount % PHYS_PER_FRAME === 0 && physTick < sim.history.length - 1) {
-          physTick++;
-          onTick?.(physTick, sim);
-        }
-        if (physTick >= sim.history.length - 1) endFrame = 0;
-      } else {
-        endFrame++;
-      }
+    // Advance playhead only while the race is actively playing.
+    // This is the ONLY place playhead moves — countdown and end sequence leave
+    // it frozen, which guarantees alpha=0 and no inter-tick oscillation.
+    if (racing) {
+      playhead = Math.min(playhead + 1 / PHYS_PER_FRAME, sim.history.length - 1);
     }
 
-    // Interpolate between the current and next physics ticks so car motion stays
-    // smooth at the effective ~30 Hz tick rate rendered at 60 fps.
-    // alpha = fractional progress within this tick interval (0..1).
-    // During the end celebration physTick is frozen, so alpha stays 0.
-    const curr  = sim.history[physTick];
-    const next  = sim.history[Math.min(physTick + 1, sim.history.length - 1)];
-    const alpha = endFrame < 0 ? (frameCount % PHYS_PER_FRAME) / PHYS_PER_FRAME : 0;
+    // Derive physTick and interpolation alpha from the single playhead float.
+    const physTickF = Math.floor(playhead);
+    const physTick  = Math.min(physTickF, sim.history.length - 1);
+    // alpha is the fractional part — zero when not racing or at the final tick.
+    const alpha = (racing && physTick < sim.history.length - 1)
+      ? (playhead - physTickF)
+      : 0;
+
+    // Fire onTick when physTick crosses a new integer boundary during racing.
+    if (racing && physTick > lastOnTickIdx) {
+      lastOnTickIdx = physTick;
+      onTick?.(physTick, sim);
+    }
+
+    // Transition to the end sequence when playhead reaches the last tick.
+    if (racing && playhead >= sim.history.length - 1) {
+      endFrame = 0;
+    } else if (!cdActive && endFrame >= 0) {
+      endFrame++;
+    }
+
+    const curr = sim.history[physTick];
+    const next = sim.history[Math.min(physTick + 1, sim.history.length - 1)];
 
     // Update car world positions and presentation animations
     for (let i = 0; i < N; i++) {
@@ -368,8 +385,8 @@ export function runReplay(canvas, hexSeed, {
       if (anim.joltAge > JOLT_FRAMES) anim.joltAge = -1;
 
       // ── Group position (X fixed, Y = road bounce, Z = race progress) ─────
-      // Use continuous frame time for bounce so it never steps at tick boundaries
-      const bounce = endFrame < 0
+      // Bounce only while racing — zero during countdown and end sequence.
+      const bounce = racing
         ? Math.sin((frameCount / PHYS_PER_FRAME) * 0.32 + i * 1.85) * Math.max(0, interpSpeed - 1.2) * 0.04
         : 0;
       carMeshes[i].position.x = laneX[i];
@@ -384,8 +401,8 @@ export function runReplay(canvas, hexSeed, {
         const joltY  = anim.joltAge >= 0 ? 0.20 * decay : 0;
         // Nose pitches down as the front wheel drops into the pothole
         const pitchX = anim.joltAge >= 0 ? -0.09 * decay : 0;
-        // Gentle continuous sway — different phase per car so they don't rock in sync
-        const swayZ  = Math.sin((frameCount / PHYS_PER_FRAME) * 0.55 + i * 2.3) * 0.018;
+        // Gentle continuous sway — only while racing so cars sit still during countdown
+        const swayZ  = racing ? Math.sin((frameCount / PHYS_PER_FRAME) * 0.55 + i * 2.3) * 0.018 : 0;
 
         anim.body.position.y = 0.5 + joltY;
         anim.body.rotation.x = pitchX;
