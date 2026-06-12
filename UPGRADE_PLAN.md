@@ -175,8 +175,7 @@ before pushing a device test build. Would have caught the Object.assign throw im
 **Error overlay**: pre-created hidden `<div>` (zero cost when silent), visible only on throw,
 removed on replay cleanup. Stays in until a clean device run is confirmed.
 
-### Phase 3 — Atmosphere Themes — DONE, awaiting device test
-**Commits**: (this session)
+### Phase 3 — Atmosphere Themes — DONE, device-verified
 - `THEME_DAY`, `THEME_DUSK`, `THEME_SNOW` objects replace the single `SCENE_THEME` constant
 - Theme index derived deterministically: `parseInt(hexSeed.slice(0,8), 16) % 3`
 - Both players always see the same theme (same seed = same theme index)
@@ -187,29 +186,30 @@ removed on replay cleanup. Stays in until a clean device run is confirmed.
 - Fog, ambient light, sun color/intensity all swap with theme
 - Zero simulation impact — physics.js untouched
 
-**Implementation**:
-- Derive theme index in `runReplay`: `const themeIdx = parseInt(hexSeed.slice(0,8), 16) % 3`
-- Create `THEMES = [THEME_DAY, THEME_DUSK, THEME_SNOW]` array of theme objects
-- Pass active theme to `buildRoad`, `buildBirchTrees` etc. instead of hardcoded colors
-- Sky shader already reads from uniforms — just update them
-- **NEVER change simulation constants or outcomes based on theme**
+**Finish-order visual fix — DONE, device-verified** (implemented alongside Phase 3 verification):
+- `finishPlayheads[i]` pre-computed: sub-tick interpolated position where each car crosses TRACK_LENGTH
+- During racing, non-winner cars held at `TRACK_LENGTH - 0.5` if they'd visually cross before the winner
+- End-sequence smoothstep animates all cars to rank-ordered resting positions (winner ≥ 40 units past, non-winner ≤ 18 units past)
+- Checkered banner added at finish line (`buildFinishLine` returns `{ material, bannerMaterial }`)
+- WINNER label drawn in HUD `drawHud` when `celebFrame >= 0 && i === winnerIdx`
+- Visual crossing order now always matches declared winner
 
-### Phase 4 — Camera & Cinematics — NOT STARTED
-**Goal**: Richer camera work, all presentation-layer only.
+### Phase 4 — Camera & Cinematics — DONE, awaiting device test
 
-**Features**:
-- **FOV kick on speed bursts**: when `interpSpeed` spikes (e.g. after pothole recovery),
-  briefly widen FOV by 3-5 degrees then lerp back. Threshold: speed > 1.1 × BASE_SPEED.
-- **Photo-finish slow-motion**: when cars are within 5% of TRACK_LENGTH and gap < 50 units,
-  slow `playhead` advance (e.g. `1 / (PHYS_PER_FRAME * 3)` instead of `1 / PHYS_PER_FRAME`).
-  Purely presentational — never changes who wins.
-- **Winner orbit**: after `END_DRIVE` frames, smoothly orbit the camera around the winning car
-  instead of just holding the chase cam. Use a circular path at fixed radius, lerped in.
-- Camera shake on pothole hits: small random offset to `camPos` decaying over 8 frames,
-  same joltAge-based decay as body pitch.
+**Features implemented**:
+- **FOV kick on speed bursts**: `currentFov` lerps toward `FOV_BASE + min(FOV_KICK_MAX=4, excess * scale)` when car 0 speed exceeds `FOV_KICK_THR=6.6` (1.1 × BASE_SPEED). Returns to base at `FOV_LERP_BACK=0.06` per frame. `updateProjectionMatrix()` called only when fov delta > 0.05.
+- **Photo-finish slow-motion**: `isCloseFinish` = finish-time gap between cars < `SLOWMO_TICKS=10` ticks. When true and leading car is past `SLOWMO_START=0.90` × TRACK_LENGTH, playhead advance divided by `SLOWMO_FACTOR=3`. Playback-rate only — sim data untouched.
+- **Winner celebration orbit**: after `END_DRIVE` frames, camera arcs around winning car at `ORBIT_RADIUS=5.5` world units, `ORBIT_SPEED=0.028` rad/frame. Blends in over 20 frames via `_blend = min(1, orbitAge/20)`. `lookTgt` lerps toward winner position at `0.04 + blend * 0.08`.
+- **Camera shake on pothole hits**: triggered on `hitJustStarted && i === 0`. Random `camShakeDX/DY` offsets decay via `exp(-(age/SHAKE_FRAMES) * 3.5)` over `SHAKE_FRAMES=8` frames.
 
-**Constraints**: All camera changes read from `sim.history` and `carMeshes[i].position` only.
-Never feed camera state back into physics.
+**Constants**:
+```
+FOV_BASE=65  FOV_KICK_MAX=4  FOV_KICK_THR=6.6  FOV_LERP_BACK=0.06
+SHAKE_FRAMES=8  ORBIT_RADIUS=5.5  ORBIT_SPEED=0.028
+SLOWMO_FACTOR=3  SLOWMO_START=0.90  SLOWMO_TICKS=10
+```
+
+**Constraints respected**: all camera changes read from `sim.history` and `carMeshes[i].position` only. Photo-finish slow-mo adjusts `playhead` advance rate only — never modifies tick data or positions.
 
 ### Phase 5 — HUD Polish — NOT STARTED
 **Goal**: Better 2D overlay drawn on the HUD canvas in `drawHud()`.

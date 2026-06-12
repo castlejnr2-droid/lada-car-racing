@@ -36,6 +36,18 @@ const CAM_HEIGHT = 2.5;  // camera height (lower, more dramatic)
 const CAM_AHEAD  = 18;   // look-ahead from player's position
 const CAM_LERP   = 0.07;
 
+// ─── Phase 4 camera cinematics ─────────────────────────────────────────────────
+const FOV_BASE      = 65;    // normal field of view (degrees)
+const FOV_KICK_MAX  = 4;     // max extra degrees on speed burst
+const FOV_KICK_THR  = 6.6;   // 1.1 × BASE_SPEED — threshold for kick
+const FOV_LERP_BACK = 0.06;  // rate FOV returns to base (per frame)
+const SHAKE_FRAMES  = 8;     // render frames a pothole-hit shake lasts
+const ORBIT_RADIUS  = 5.5;   // world units for celebration orbit
+const ORBIT_SPEED   = 0.028; // radians per frame
+const SLOWMO_FACTOR = 3;     // playhead divisor during photo-finish approach
+const SLOWMO_START  = 0.90;  // fraction of TRACK_LENGTH where slow-mo begins
+const SLOWMO_TICKS  = 10;    // finish-time gap (ticks) that qualifies as "close"
+
 const COUNTDOWN_STEP  = 36;
 const COUNTDOWN_GO    = 24;
 const COUNTDOWN_TOTAL = 3 * COUNTDOWN_STEP + COUNTDOWN_GO;
@@ -224,6 +236,11 @@ export function runReplay(canvas, hexSeed, {
     finishPlayheads.map((t, i) => `car${i}=${t.toFixed(2)}`).join(' '),
     '| winner=car' + sim.winner);
 
+  // Is this a close finish? Pre-computed once so the slow-mo check is O(1) per frame.
+  const isCloseFinish = N === 2
+    && Math.abs(finishPlayheads[0] - finishPlayheads[1]) < SLOWMO_TICKS;
+  if (isCloseFinish) console.log('[replay] close finish — slow-mo will engage in final stretch');
+
   // Lane X positions: evenly spread within LANE_SPREAD (±0.6 for 2 cars)
   const laneX = Array.from({ length: N }, (_, i) =>
     ((i + 0.5) / N - 0.5) * LANE_SPREAD,
@@ -343,6 +360,12 @@ export function runReplay(canvas, hexSeed, {
   let endFrame      = -1;
   let cancelled     = false;
   let rafId         = null;
+
+  // Phase 4 camera state — all presentation-layer, reset each race
+  let currentFov  = FOV_BASE;  // actual camera FOV, lerped toward target each frame
+  let camShakeAge = -1;        // frames since last pothole-hit shake (-1 = idle)
+  let camShakeDX  = 0;         // random X offset baked at shake onset, decays away
+  let camShakeDY  = 0;         // random Y offset baked at shake onset, decays away
 
   // ── GLB car model loader ──────────────────────────────────────────────────
   const GLB_URL = 'https://cdn.jsdelivr.net/gh/castlejnr2-droid/lada-car-racing@main/frontend/public/car.glb';
@@ -479,8 +502,17 @@ export function runReplay(canvas, hexSeed, {
     // Advance playhead only while the race is actively playing.
     // This is the ONLY place playhead moves — countdown and end sequence leave
     // it frozen, which guarantees alpha=0 and no inter-tick oscillation.
+    //
+    // Photo-finish slow-mo (Phase 4): if this race was pre-detected as a close
+    // finish AND the leader is inside the final stretch, divide the advance rate
+    // by SLOWMO_FACTOR. This stretches the visual playback only — sim history,
+    // tick data, positions, and winner are completely untouched.
     if (racing) {
-      playhead = Math.min(playhead + 1 / PHYS_PER_FRAME, sim.history.length - 1);
+      const _curTick = Math.min(Math.floor(playhead), sim.history.length - 1);
+      const _leadPos = Math.max(...sim.history[_curTick].positions);
+      const _slow    = (isCloseFinish && _leadPos > TRACK_LENGTH * SLOWMO_START)
+        ? SLOWMO_FACTOR : 1;
+      playhead = Math.min(playhead + 1 / (PHYS_PER_FRAME * _slow), sim.history.length - 1);
     }
 
     // Derive physTick and interpolation alpha from the single playhead float.
@@ -506,6 +538,17 @@ export function runReplay(canvas, hexSeed, {
 
     const curr = sim.history[physTick];
     const next = sim.history[Math.min(physTick + 1, sim.history.length - 1)];
+
+    // ── FOV kick on speed burst (Phase 4) ────────────────────────────────────
+    // Car 0's interpolated speed drives the target FOV. After exiting a pothole
+    // the speed jumps; widening FOV for a moment sells the surge of acceleration.
+    // currentFov lerps toward the target and is applied to the camera below.
+    {
+      const _fovSpeed  = curr.speeds[0] + (next.speeds[0] - curr.speeds[0]) * alpha;
+      const _fovExcess = racing ? Math.max(0, _fovSpeed - FOV_KICK_THR) : 0;
+      const _fovTarget = FOV_BASE + Math.min(FOV_KICK_MAX, _fovExcess * (FOV_KICK_MAX / 0.8));
+      currentFov += (_fovTarget - currentFov) * FOV_LERP_BACK;
+    }
 
     // ── Position correction (presentation layer only) ─────────────────────────
     // Raw sim positions can place a non-winner car further past the finish line
@@ -605,6 +648,13 @@ export function runReplay(canvas, hexSeed, {
       if (hitJustStarted && endFrame < 0) {
         triggerDustBurst(dustPool, carMeshes[i].position);
       }
+
+      // ── Camera shake on hit — car 0 only (player's car), racing only ─────
+      if (hitJustStarted && endFrame < 0 && i === 0) {
+        camShakeAge = 0;
+        camShakeDX  = (Math.random() - 0.5) * 0.18;
+        camShakeDY  = Math.random() * 0.10;   // always push up (pothole jolt)
+      }
     }
 
     // Advance dust particles every frame regardless of car count
@@ -613,19 +663,63 @@ export function runReplay(canvas, hexSeed, {
     // HUD progress bar uses corrected display positions so bar rank agrees with visual
     const interpPositions = displayPos;
 
-    // Follow the leading car (furthest in -Z = most negative Z).
-    // Z tracks exactly to prevent sideways drift from lag.
+    // ── Camera (Phase 4) ──────────────────────────────────────────────────────
+    // Chase cam is always computed as the base; orbit blends in on top during
+    // the celebration, and shake offsets are applied before copying to camera.
+
     let leadIdx = 0;
     for (let i = 1; i < N; i++) {
       if (carMeshes[i].position.z < carMeshes[leadIdx].position.z) leadIdx = i;
     }
     const pz = carMeshes[leadIdx].position.z;
+
+    // Base chase cam
     camPos.x += (laneX[leadIdx] * 0.15 - camPos.x) * CAM_LERP;
     camPos.y += (CAM_HEIGHT             - camPos.y) * CAM_LERP;
     camPos.z  = pz + CAM_BACK;
+
+    // Pothole camera shake — decays exponentially over SHAKE_FRAMES
+    if (camShakeAge >= 0) {
+      const _shakeDecay = Math.exp(-(camShakeAge / SHAKE_FRAMES) * 3.5);
+      camPos.x += camShakeDX * _shakeDecay;
+      camPos.y += camShakeDY * _shakeDecay;
+      if (++camShakeAge > SHAKE_FRAMES) camShakeAge = -1;
+    }
+
+    // Determine look target (lerp rate differs: instant in chase, smooth in orbit)
+    let _tgtLookX, _tgtLookY, _tgtLookZ, _lookLerp;
+    if (endFrame >= END_DRIVE) {
+      // Winner orbit — camera arcs around the winning car during celebration
+      const _orbitAge   = endFrame - END_DRIVE;
+      const _blend      = Math.min(1, _orbitAge / 20);  // lerp in over 20 frames
+      const _angle      = _orbitAge * ORBIT_SPEED;
+      const _winPos     = carMeshes[sim.winner].position;
+
+      const _orbitX = _winPos.x + Math.cos(_angle) * ORBIT_RADIUS;
+      const _orbitZ = _winPos.z + Math.sin(_angle) * ORBIT_RADIUS;
+
+      camPos.x += (_orbitX - camPos.x) * (CAM_LERP + _blend * 0.18);
+      camPos.y += (2.2     - camPos.y) * (CAM_LERP + _blend * 0.05);
+      camPos.z += (_orbitZ - camPos.z) * (CAM_LERP + _blend * 0.18);
+
+      _tgtLookX = _winPos.x;  _tgtLookY = 0.9;  _tgtLookZ = _winPos.z;
+      _lookLerp = 0.04 + _blend * 0.08;
+    } else {
+      _tgtLookX = laneX[leadIdx] * 0.1;  _tgtLookY = 0.3;  _tgtLookZ = pz - CAM_AHEAD;
+      _lookLerp = 1.0;   // set directly — no accumulated lookTgt state during chase
+    }
+    lookTgt.x += (_tgtLookX - lookTgt.x) * _lookLerp;
+    lookTgt.y += (_tgtLookY - lookTgt.y) * _lookLerp;
+    lookTgt.z += (_tgtLookZ - lookTgt.z) * _lookLerp;
+
     camera.position.copy(camPos);
-    lookTgt.set(laneX[leadIdx] * 0.1, 0.3, pz - CAM_AHEAD);
     camera.lookAt(lookTgt);
+
+    // Apply FOV (computed above; updateProjectionMatrix only when value changes)
+    if (Math.abs(camera.fov - currentFov) > 0.05) {
+      camera.fov = currentFov;
+      camera.updateProjectionMatrix();
+    }
 
     // Finish line glow pulses during celebration (both floor decal and banner)
     const finishGlow = endFrame >= END_DRIVE ? 2.0 : 0.4;
