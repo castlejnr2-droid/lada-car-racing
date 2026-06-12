@@ -132,8 +132,8 @@ export function runReplay(canvas, hexSeed, {
   scene.fog = new THREE.Fog(0xc8e8f4, TRACK_LENGTH * 0.5, TRACK_LENGTH * 1.2);
 
   // Lighting — bright daytime
-  scene.add(new THREE.AmbientLight(0xffffff, 1.5));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+  scene.add(new THREE.AmbientLight(0xffffff, 3.0));
+  const sun = new THREE.DirectionalLight(0xffffff, 4.0);
   sun.position.set(50, 100, 50);
   scene.add(sun);
 
