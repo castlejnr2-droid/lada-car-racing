@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
@@ -65,6 +66,24 @@ const DUST_PER_BURST  = 22;    // particles per pothole dust burst
 const DUST_MAX_BURSTS = 4;     // concurrent burst slots (2 cars + margin)
 const DUST_LIFE       = 24;    // render frames per dust particle
 const TINT_STRENGTH   = 0.60;  // lerp weight toward tint hue (0=keep orig, 1=pure tint)
+
+// ─── Scene theme — day (default) ──────────────────────────────────────────────
+// All lighting, fog, and sky values live here so Phase 3 can swap the whole
+// look by passing a different theme object without touching any other code.
+const SCENE_THEME = {
+  ambientColor:     0xdde8f0,
+  ambientIntensity: 4.0,
+  sunColor:         0xfff4e0,
+  sunIntensity:     5.0,
+  fogColor:         0xc0ccd8,
+  fogNear:          TRACK_LENGTH * 0.45,
+  fogFar:           TRACK_LENGTH * 1.1,
+  skyHorizon:       [0.82, 0.86, 0.90],   // vec3 for sky shader
+  skyZenith:        [0.45, 0.62, 0.80],
+  groundColor:      0x5a7a35,             // grass shoulder
+  earthColor:       0x7a6e52,             // outer dirt
+  roadColor:        0x525252,             // asphalt
+};
 
 
 // ─── Public entry ──────────────────────────────────────────────────────────────
@@ -142,17 +161,17 @@ export function runReplay(canvas, hexSeed, {
 
   // ── Main 3D scene ─────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
-  // Atmospheric haze — soft gray-blue for depth on distant buildings
-  scene.fog = new THREE.Fog(0xc0ccd8, TRACK_LENGTH * 0.45, TRACK_LENGTH * 1.1);
+  // Atmospheric haze — values from SCENE_THEME so Phase 3 can swap cleanly
+  scene.fog = new THREE.Fog(SCENE_THEME.fogColor, SCENE_THEME.fogNear, SCENE_THEME.fogFar);
 
-  // Lighting — bright overcast Russian daylight
-  scene.add(new THREE.AmbientLight(0xdde8f0, 4.0));
-  const sun = new THREE.DirectionalLight(0xfff4e0, 5.0);
+  // Lighting
+  scene.add(new THREE.AmbientLight(SCENE_THEME.ambientColor, SCENE_THEME.ambientIntensity));
+  const sun = new THREE.DirectionalLight(SCENE_THEME.sunColor, SCENE_THEME.sunIntensity);
   sun.position.set(30, 80, 40);
   scene.add(sun);
 
-  // ── Sky with clouds ───────────────────────────────────────────────────────
-  buildSky(scene);
+  // ── Sky with drifting cloud layers (returned for per-frame animation) ─────
+  const clouds = buildSky(scene);
 
   // ── Main camera ───────────────────────────────────────────────────────────
   const camera  = new THREE.PerspectiveCamera(65, W / H, 0.1, TRACK_LENGTH * 2);
@@ -171,12 +190,13 @@ export function runReplay(canvas, hexSeed, {
   const hud = makeHudPlane(W, H, hudScene);
 
   // ── World geometry ────────────────────────────────────────────────────────
-  buildRoad(scene, N, laneX);
+  buildRoad(scene, N, laneX, track);   // track supplies exact pothole positions
   const finishMesh = buildFinishLine(scene);
   buildPanelki(scene, rng);
   buildBirchTrees(scene, rng);
   buildLampPosts(scene);
   buildRoadFurniture(scene);
+  buildSkyline(scene);
 
   // ── Car model containers ─────────────────────────────────────────────────
   // Start at z=-10 so cars are in front of the camera immediately
@@ -468,6 +488,12 @@ export function runReplay(canvas, hexSeed, {
     );
     hud.tex.needsUpdate = true;
 
+    // Drift cloud layers laterally — each layer at a different speed for depth
+    for (const cl of clouds) {
+      cl.mesh.position.x += cl.speed;
+      if (cl.mesh.position.x > 320) cl.mesh.position.x -= 640;
+    }
+
     // Render: 3D scene first, then 2D HUD on top
     renderer.clear();
     renderer.render(scene, camera);
@@ -503,55 +529,80 @@ export function runReplay(canvas, hexSeed, {
 }
 
 // ─── Road ──────────────────────────────────────────────────────────────────────
-// Gray asphalt + grass shoulders + white edge lines + white dashed center line.
-function buildRoad(scene, N, laneX) {
+// Asphalt + grass shoulders + edge lines + pothole decals at exact sim positions.
+function buildRoad(scene, N, laneX, track) {
   const Z_START =  25;
   const Z_END   = -(TRACK_LENGTH * 1.35);
   const LEN     = Z_START - Z_END;
   const midZ    = (Z_START + Z_END) / 2;
 
-  // Gray asphalt surface
-  const roadMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(ROAD_W, LEN),
-    new THREE.MeshLambertMaterial({ color: 0x525252 }),
-  );
-  roadMesh.rotation.x = -Math.PI / 2;
-  roadMesh.position.set(0, 0, midZ);
-  scene.add(roadMesh);
+  // Asphalt, grass, earth — colors from SCENE_THEME
+  scene.add(Object.assign(
+    new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, LEN),
+      new THREE.MeshLambertMaterial({ color: SCENE_THEME.roadColor })),
+    { rotation: new THREE.Euler(-Math.PI / 2, 0, 0), position: new THREE.Vector3(0, 0, midZ) },
+  ));
 
-  // Grass shoulders — green strip on each side of the road
   const GRASS_W = 7;
-  const grassMat = new THREE.MeshLambertMaterial({ color: 0x5a7a35 });
+  const grassMat = new THREE.MeshLambertMaterial({ color: SCENE_THEME.groundColor });
+  const earthMat = new THREE.MeshLambertMaterial({ color: SCENE_THEME.earthColor });
+  const EARTH_W  = 110;
   for (const sx of [-1, 1]) {
     const grass = new THREE.Mesh(new THREE.PlaneGeometry(GRASS_W, LEN), grassMat);
     grass.rotation.x = -Math.PI / 2;
     grass.position.set(sx * (ROAD_W / 2 + GRASS_W / 2), -0.005, midZ);
     scene.add(grass);
-  }
 
-  // Dirt/earth ground further out — brownish
-  const EARTH_W = 110;
-  const earthMat = new THREE.MeshLambertMaterial({ color: 0x7a6e52 });
-  for (const sx of [-1, 1]) {
     const earth = new THREE.Mesh(new THREE.PlaneGeometry(EARTH_W, LEN), earthMat);
     earth.rotation.x = -Math.PI / 2;
     earth.position.set(sx * (ROAD_W / 2 + GRASS_W + EARTH_W / 2), -0.01, midZ);
     scene.add(earth);
   }
 
-  // Solid white edge lines
+  // Edge lines + dashed centre line
   const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff });
   for (const ex of [-ROAD_W / 2, ROAD_W / 2]) {
-    const pts = [new THREE.Vector3(ex, 0.03, Z_START), new THREE.Vector3(ex, 0.03, Z_END)];
-    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), edgeMat));
+    scene.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(ex, 0.03, Z_START),
+        new THREE.Vector3(ex, 0.03, Z_END),
+      ]), edgeMat));
   }
-
-  // White dashed center line
-  const dashMat = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 7, gapSize: 7 });
-  const centerPts = [new THREE.Vector3(0, 0.03, Z_START), new THREE.Vector3(0, 0.03, Z_END)];
-  const centerLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(centerPts), dashMat);
+  const dashMat    = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 7, gapSize: 7 });
+  const centerLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0.03, Z_START),
+      new THREE.Vector3(0, 0.03, Z_END),
+    ]), dashMat);
   centerLine.computeLineDistances();
   scene.add(centerLine);
+
+  // ── Pothole decals — placed at exact sim pothole positions ─────────────────
+  // Merged into one draw call so 28 decals cost the same as 1.
+  if (track) {
+    const potTex  = makePotholeTexture();
+    const potMat  = new THREE.MeshBasicMaterial({
+      map: potTex, transparent: true, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    });
+    const decalGeos = [];
+    for (let lane = 0; lane < track.lanes.length && lane < N; lane++) {
+      const lx = laneX[lane];
+      for (const pz of track.lanes[lane].potholes) {
+        const g = new THREE.PlaneGeometry(2.2, 2.2);
+        g.rotateX(-Math.PI / 2);
+        g.translate(lx, 0.01, -pz);
+        decalGeos.push(g);
+      }
+    }
+    if (decalGeos.length > 0) {
+      const merged = mergeGeometries(decalGeos);
+      decalGeos.forEach(g => g.dispose());
+      const m = new THREE.Mesh(merged, potMat);
+      m.renderOrder = 1;
+      scene.add(m);
+    }
+  }
 }
 
 // ─── Finish line ───────────────────────────────────────────────────────────────
@@ -596,152 +647,148 @@ function buildFinishLine(scene) {
 }
 
 // ─── Soviet panel apartment blocks (panelki) ───────────────────────────────────
-// Tall rectangular Khrushchyovka / Brezhnevka blocks with window grids,
-// horizontal panel seams, and beige/gray concrete palette.
+// Three facade texture variants. All buildings per variant+side are merged into
+// one geometry — 3 variants × 2 sides = 6 draw calls for the entire streetscape.
+// Panel seam lines are baked into the textures, eliminating hundreds of seam meshes.
 function buildPanelki(scene, rng) {
-  // Build 4 reusable window-grid canvas textures to avoid per-building cost
-  const WIN_TEXTURES = Array.from({ length: 4 }, (_, ti) => {
-    const CELL_W = 20, CELL_H = 18;
-    const bays = 8, floors = 10;
-    const c = document.createElement('canvas');
-    c.width  = bays * CELL_W;
-    c.height = floors * CELL_H;
-    const ctx = c.getContext('2d');
-    // Concrete facade — slight color variation per texture
-    const bgColors = ['#c8bfa8', '#b8b5a4', '#d0c8b2', '#bcb9ae'];
-    ctx.fillStyle = bgColors[ti];
-    ctx.fillRect(0, 0, c.width, c.height);
-    for (let row = 0; row < floors; row++) {
-      for (let col = 0; col < bays; col++) {
-        // Window: sky-blue if day-lit, dark if unlit
-        ctx.fillStyle = Math.random() > 0.25 ? '#8bb8cc' : '#2a3040';
-        ctx.fillRect(col * CELL_W + 3, row * CELL_H + 3, CELL_W - 6, CELL_H - 5);
-        // Balcony rail hint on some windows
-        if (Math.random() > 0.55) {
-          ctx.fillStyle = '#9a9282';
-          ctx.fillRect(col * CELL_W + 1, row * CELL_H + CELL_H - 4, CELL_W - 2, 2);
-        }
-      }
-    }
-    const tex = new THREE.CanvasTexture(c);
-    tex.wrapS = THREE.ClampToEdgeWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    return tex;
-  });
+  // Variant definitions: [bg colour hex string, window colour hex string, base colour int]
+  const VARIANTS = [
+    { bg: '#c8bfa8', win: '#8bb8cc', base: 0xC8BFA8 },  // beige / sky-blue windows
+    { bg: '#b4b0a0', win: '#6ea8ba', base: 0xB4B0A0 },  // mid-gray / muted windows
+    { bg: '#d0c8b4', win: '#9ac8d8', base: 0xD0C8B4 },  // warm tan / bright windows
+  ];
 
-  const seamMat = new THREE.MeshLambertMaterial({ color: 0x7a7468 });
-  const CLEARANCE = ROAD_W / 2 + 22;  // distance from road centre to building face
+  // One window+seam texture per variant (shared across all buildings of that variant)
+  const textures = VARIANTS.map(({ bg, win }) => makeWinTex(bg, win));
+  const materials = VARIANTS.map(({ base }, vi) =>
+    new THREE.MeshLambertMaterial({ color: base, map: textures[vi] }),
+  );
+
+  const CLEARANCE = ROAD_W / 2 + 22;
 
   for (const side of [-1, 1]) {
+    // Geometry buckets — one per variant (buildings assigned round-robin by rng)
+    const buckets = [[], [], []];
+
     let z = 0;
     while (z < TRACK_LENGTH * 1.2) {
-      const floors = 9 + Math.floor(rng() * 8);      // 9–16 stories
-      const bays   = 7 + Math.floor(rng() * 7);      // 7–13 bays wide
-      const h      = floors * 3.0;                    // ~3 m per floor
-      const w      = bays   * 3.5;                    // ~3.5 m per bay
-      const depth  = 10 + rng() * 8;
-      const gap    = 4  + rng() * 12;
-      const xOff   = rng() * 8;
+      const floorCount = 6  + Math.floor(rng() * 11);  // 6–16 stories
+      const bayCount   = 5  + Math.floor(rng() * 9);   // 5–13 bays
+      const h     = floorCount * 3.0;
+      const w     = bayCount   * 3.5;
+      const depth = 10 + rng() * 8;
+      const gap   =  4 + rng() * 12;
+      const xOff  = rng() * 8;
+      const vi    = Math.floor(rng() * 3);              // variant index
 
       const bx = side * (CLEARANCE + w / 2 + xOff);
       const bz = -(z + depth / 2);
 
-      const baseColors = [0xC8BFA8, 0xB8B4A2, 0xD0C8B4, 0xC0BAA8];
-      const baseColor  = baseColors[Math.floor(rng() * baseColors.length)];
-      const winTex     = WIN_TEXTURES[Math.floor(rng() * WIN_TEXTURES.length)];
-
-      const mat  = new THREE.MeshLambertMaterial({ color: baseColor, map: winTex });
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, depth), mat);
-      mesh.position.set(bx, h / 2, bz);
-      scene.add(mesh);
-
-      // Horizontal prefab panel seams every 3 m
-      for (let sy = 3; sy < h - 1; sy += 3) {
-        const seam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.06, 0.1, depth + 0.06), seamMat);
-        seam.position.set(bx, sy, bz);
-        scene.add(seam);
-      }
-
-      // Occasional rooftop antenna / parapet stub
-      if (rng() > 0.5) {
-        const aW  = 0.2 + rng() * 0.3;
-        const aH  = 2   + rng() * 6;
-        const aMat = new THREE.MeshLambertMaterial({ color: 0x555550 });
-        const ant  = new THREE.Mesh(new THREE.BoxGeometry(aW, aH, aW), aMat);
-        ant.position.set(bx + (rng() - 0.5) * w * 0.4, h + aH / 2, bz + (rng() - 0.5) * depth * 0.3);
-        scene.add(ant);
-      }
+      const geo = new THREE.BoxGeometry(w, h, depth);
+      geo.translate(bx, h / 2, bz);
+      buckets[vi].push(geo);
 
       z += depth + gap;
+    }
+
+    // Merge each bucket into one mesh per variant — 3 draw calls per side
+    for (let vi = 0; vi < 3; vi++) {
+      if (buckets[vi].length === 0) continue;
+      const merged = mergeGeometries(buckets[vi]);
+      buckets[vi].forEach(g => g.dispose());
+      scene.add(new THREE.Mesh(merged, materials[vi]));
     }
   }
 }
 
 // ─── Birch trees ───────────────────────────────────────────────────────────────
-// White trunks with dark bark rings and multi-sphere green crowns.
+// Two InstancedMesh objects (trunks + leaf puffs) = 2 draw calls for all trees.
+// Bark rings removed — invisible at race distance and expensive per-tree.
 function buildBirchTrees(scene, rng) {
-  const TREE_X   = ROAD_W / 2 + 4.0;  // just outside the grass shoulder
-  const COUNT    = 20;
-  const trunkMat = new THREE.MeshLambertMaterial({ color: 0xf0ece6 }); // white birch
-  const barkMat  = new THREE.MeshLambertMaterial({ color: 0x28201a }); // dark bark patches
-  const leafMat  = new THREE.MeshLambertMaterial({ color: 0x4a8828 }); // leafy green
+  const TREE_X   = ROAD_W / 2 + 4.0;
+  const COUNT    = 22;                           // trees per side
+  const SIDES    = 2;
+  const MAX_PUFFS_PER = 5;
+  const TOTAL_TREES = COUNT * SIDES;
+  const TOTAL_PUFFS = TOTAL_TREES * MAX_PUFFS_PER;
+
+  const trunkInst = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.20, 0.28, 1, 7),  // height=1, scaled per instance
+    new THREE.MeshLambertMaterial({ color: 0xf0ece8 }),
+    TOTAL_TREES,
+  );
+  trunkInst.frustumCulled = false;
+  scene.add(trunkInst);
+
+  const leafInst = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 6, 5),             // r=1, scaled per instance
+    new THREE.MeshLambertMaterial({ color: 0x4a8828 }),
+    TOTAL_PUFFS,
+  );
+  leafInst.frustumCulled = false;
+  scene.add(leafInst);
+
+  const dummy = new THREE.Object3D();
+  let tIdx = 0, pIdx = 0;
 
   for (const sx of [-TREE_X, TREE_X]) {
     for (let i = 0; i < COUNT; i++) {
-      const wz      = -(i / COUNT) * TRACK_LENGTH * 1.15;
-      const jitter  = (rng() - 0.5) * 2.0;   // slight stagger off the line
-      const trunkH  = 7.0 + rng() * 2.0;  // taller so trunk shows below crown
+      const wz     = -(i / COUNT) * TRACK_LENGTH * 1.15;
+      const jitter = (rng() - 0.5) * 2.2;
+      const trunkH = 7.0 + rng() * 2.5;
+      const tx     = sx + jitter;
 
-      // White birch trunk — thicker so it reads clearly from road
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.18, 0.26, trunkH, 6),
-        trunkMat,
-      );
-      trunk.position.set(sx + jitter, trunkH / 2, wz);
-      scene.add(trunk);
+      // Trunk instance — scale Y = trunk height, X/Z = trunk radius
+      dummy.position.set(tx, trunkH / 2, wz);
+      dummy.scale.set(1, trunkH, 1);
+      dummy.updateMatrix();
+      trunkInst.setMatrixAt(tIdx++, dummy.matrix);
 
-      // Dark bark-mark rings (2–3 per tree)
-      const patches = 2 + Math.floor(rng() * 2);
-      for (let p = 0; p < patches; p++) {
-        const py = ((p + 1) / (patches + 1)) * trunkH;
-        const ring = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.19, 0.19, 0.28, 6),
-          barkMat,
-        );
-        ring.position.set(sx + jitter, py, wz);
-        scene.add(ring);
-      }
-
-      // Leafy crown — starts above the trunk top so trunk stays visible
+      // Leaf puff instances
       const puffs = 3 + Math.floor(rng() * 3);
-      for (let p = 0; p < puffs; p++) {
-        const r  = 1.1 + rng() * 0.8;
-        const cx = (rng() - 0.5) * 1.6;
-        const cy = trunkH + 1.2 + rng() * 1.5;  // raised: crown starts 1.2 above trunk top
-        const cz = (rng() - 0.5) * 1.6;
-        const puff = new THREE.Mesh(
-          new THREE.SphereGeometry(r, 6, 5),
-          leafMat,
-        );
-        puff.position.set(sx + jitter + cx, cy, wz + cz);
-        scene.add(puff);
+      for (let p = 0; p < puffs && pIdx < TOTAL_PUFFS; p++) {
+        const r  = 1.1 + rng() * 0.9;
+        const cx = (rng() - 0.5) * 1.8;
+        const cy = trunkH + 1.2 + rng() * 1.6;
+        const cz = (rng() - 0.5) * 1.8;
+        dummy.position.set(tx + cx, cy, wz + cz);
+        dummy.scale.setScalar(r);
+        dummy.updateMatrix();
+        leafInst.setMatrixAt(pIdx++, dummy.matrix);
       }
     }
   }
+
+  // Park any remaining leaf slots far below scene
+  dummy.position.set(0, -2000, 0);
+  dummy.scale.setScalar(0.001);
+  dummy.updateMatrix();
+  for (let i = pIdx; i < TOTAL_PUFFS; i++) leafInst.setMatrixAt(i, dummy.matrix);
+
+  trunkInst.instanceMatrix.needsUpdate = true;
+  leafInst.instanceMatrix.needsUpdate  = true;
 }
 
 // ─── Streetlights with cobra-head lamps and power lines ───────────────────────
+// Poles, arms, and housings are merged into 3 draw calls total (+ lines + glow).
+// An additive glow disc batch under each lamp head adds visible street lighting
+// without shadows or postprocessing.
 function buildLampPosts(scene) {
-  const POLE_H  = 7;
-  const SIDE_X  = ROAD_W / 2 + 1.8;
-  const COUNT   = 12;
+  const POLE_H = 7;
+  const SIDE_X = ROAD_W / 2 + 1.8;
+  const COUNT  = 12;
+
   const poleMat = new THREE.MeshLambertMaterial({ color: 0x606068 });
   const headMat = new THREE.MeshLambertMaterial({
-    color: 0xffe8a0,
-    emissive: new THREE.Color(0xffd060),
-    emissiveIntensity: 1.0,
+    color: 0xffe8a0, emissive: new THREE.Color(0xffd060), emissiveIntensity: 1.2,
+  });
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: 0xffee80, transparent: true, opacity: 0.20,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
   });
   const wireMat = new THREE.LineBasicMaterial({ color: 0x1a1a1a });
+
+  const poleGeos = [], armGeos = [], headGeos = [], glowGeos = [];
 
   for (const sx of [-SIDE_X, SIDE_X]) {
     const armDir = sx < 0 ? 1 : -1;
@@ -751,47 +798,57 @@ function buildLampPosts(scene) {
       const wz = -(i / (COUNT - 1)) * TRACK_LENGTH;
       poleZ.push(wz);
 
-      // Tapered pole
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.11, POLE_H, 6), poleMat);
-      pole.position.set(sx, POLE_H / 2, wz);
-      scene.add(pole);
+      // Pole — CylinderGeometry is already vertical; just translate
+      const pg = new THREE.CylinderGeometry(0.06, 0.11, POLE_H, 6);
+      pg.translate(sx, POLE_H / 2, wz);
+      poleGeos.push(pg);
 
-      // Horizontal arm extending toward the road
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.09, 0.09), poleMat);
-      arm.position.set(sx + armDir * 0.75, POLE_H, wz);
-      scene.add(arm);
+      // Arm
+      const ag = new THREE.BoxGeometry(1.5, 0.09, 0.09);
+      ag.translate(sx + armDir * 0.75, POLE_H, wz);
+      armGeos.push(ag);
 
-      // Cobra-head lamp housing
-      const housing = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.18, 0.5), headMat);
-      housing.position.set(sx + armDir * 1.5, POLE_H - 0.09, wz);
-      scene.add(housing);
+      // Visor (same material as poles/arms)
+      const vg = new THREE.BoxGeometry(0.85, 0.07, 0.58);
+      vg.translate(sx + armDir * 1.5, POLE_H + 0.06, wz);
+      armGeos.push(vg);
 
-      // Visor overhang above lamp
-      const visor = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.07, 0.58), poleMat);
-      visor.position.set(sx + armDir * 1.5, POLE_H + 0.06, wz);
-      scene.add(visor);
+      // Lamp housing (emissive material)
+      const hg = new THREE.BoxGeometry(0.75, 0.18, 0.50);
+      hg.translate(sx + armDir * 1.5, POLE_H - 0.09, wz);
+      headGeos.push(hg);
+
+      // Additive glow disc — small circle under each lamp head
+      const gg = new THREE.CircleGeometry(0.85, 8);
+      gg.rotateX(Math.PI / 2);  // face upward (light shining down)
+      gg.translate(sx + armDir * 1.5, POLE_H - 0.22, wz);
+      glowGeos.push(gg);
     }
 
-    // Power lines between consecutive poles — slight catenary sag
+    // Power wires with catenary sag
     const wireY = POLE_H - 0.3;
     for (let i = 0; i < poleZ.length - 1; i++) {
-      const z0   = poleZ[i];
-      const z1   = poleZ[i + 1];
-      const midZ = (z0 + z1) / 2;
-      const pts  = [
-        new THREE.Vector3(sx, wireY,       z0),
-        new THREE.Vector3(sx, wireY - 0.5, midZ),  // catenary sag
-        new THREE.Vector3(sx, wireY,       z1),
-      ];
-      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wireMat));
+      const z0 = poleZ[i], z1 = poleZ[i + 1];
+      scene.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(sx, wireY,       z0),
+          new THREE.Vector3(sx, wireY - 0.5, (z0 + z1) / 2),
+          new THREE.Vector3(sx, wireY,       z1),
+        ]), wireMat));
     }
   }
 
-  // Shared PointLights spread along the road centre for ambient road glow
-  for (let i = 0; i < 5; i++) {
-    const wz = -(i / 4) * TRACK_LENGTH;
-    const pt = new THREE.PointLight(0xffcc44, 0.8, 60);
-    pt.position.set(0, POLE_H - 1, wz);
+  // 4 merged draw calls for all lamp geometry
+  scene.add(new THREE.Mesh(mergeGeometries(poleGeos), poleMat));
+  scene.add(new THREE.Mesh(mergeGeometries(armGeos),  poleMat));
+  scene.add(new THREE.Mesh(mergeGeometries(headGeos), headMat));
+  scene.add(new THREE.Mesh(mergeGeometries(glowGeos), glowMat));
+  [...poleGeos, ...armGeos, ...headGeos, ...glowGeos].forEach(g => g.dispose());
+
+  // 4 point lights along road centre for warm ambient fill
+  for (let i = 0; i < 4; i++) {
+    const pt = new THREE.PointLight(0xffcc44, 0.7, 65);
+    pt.position.set(0, POLE_H - 1, -(i / 3) * TRACK_LENGTH);
     scene.add(pt);
   }
 }
@@ -915,28 +972,35 @@ function buildRoadFurniture(scene) {
   }
 }
 
-// ─── Sky with gradient and soft clouds ────────────────────────────────────────
+// ─── Sky with gradient and drifting cloud layers ──────────────────────────────
+// Returns an array of { mesh, speed } for the main loop to drift laterally.
+// Three cloud layers drift at different speeds for a parallax depth effect.
+// All puffs per layer are merged into one geometry — 3 draw calls for all clouds.
 function buildSky(scene) {
-  // Gradient sphere — Russian overcast blue-gray sky
+  // Gradient sky sphere — colours from SCENE_THEME for Phase 3 swappability
+  const [hr, hg, hb] = SCENE_THEME.skyHorizon;
+  const [zr, zg, zb] = SCENE_THEME.skyZenith;
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(TRACK_LENGTH * 1.8, 32, 16),
+    new THREE.SphereGeometry(TRACK_LENGTH * 1.8, 18, 10),
     new THREE.ShaderMaterial({
-      uniforms: {},
+      uniforms: {
+        uHorizon: { value: new THREE.Vector3(hr, hg, hb) },
+        uZenith:  { value: new THREE.Vector3(zr, zg, zb) },
+      },
       vertexShader: /* glsl */`
-        varying vec3 vWorldPos;
+        varying float vY;
         void main() {
-          vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+          vY = (modelMatrix * vec4(position, 1.0)).y;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
       fragmentShader: /* glsl */`
-        varying vec3 vWorldPos;
+        uniform vec3 uHorizon;
+        uniform vec3 uZenith;
+        varying float vY;
         void main() {
-          float t = clamp(vWorldPos.y / 800.0, 0.0, 1.0);
-          // horizon: pale gray-white  →  zenith: cool overcast blue
-          vec3 horizon = vec3(0.82, 0.86, 0.90);
-          vec3 zenith  = vec3(0.45, 0.62, 0.80);
-          gl_FragColor = vec4(mix(horizon, zenith, pow(t, 0.6)), 1.0);
+          float t = clamp(vY / 800.0, 0.0, 1.0);
+          gl_FragColor = vec4(mix(uHorizon, uZenith, pow(t, 0.6)), 1.0);
         }
       `,
       side: THREE.BackSide,
@@ -945,33 +1009,44 @@ function buildSky(scene) {
   );
   scene.add(sky);
 
-  // Soft flat cloud puffs
-  const cloudMat = new THREE.MeshLambertMaterial({ color: 0xfafcff, transparent: true, opacity: 0.88 });
-  const cloudDefs = [
-    { x: -90,  y: 62, z: -80  },
-    { x:  55,  y: 70, z: -220 },
-    { x: -45,  y: 66, z: -400 },
-    { x:  100, y: 58, z: -580 },
-    { x: -70,  y: 74, z: -750 },
-    { x:  30,  y: 68, z: -950 },
+  // Cloud layers — 3 groups merged separately, drifting at different speeds.
+  // Using Math.random() (not seeded rng) so clouds vary each session cosmetically.
+  const cloudMat = new THREE.MeshLambertMaterial({
+    color: 0xfafcff, transparent: true, opacity: 0.86,
+  });
+
+  // Each layer: array of cluster centres + drift speed
+  const LAYERS = [
+    { centres: [[-90,65,-120],[60,72,-400],[-30,60,-750]], speed: 0.022 },
+    { centres: [[50,68,-200],[-70,74,-550],[110,62,-880],[-20,70,-1050]], speed: 0.038 },
+    { centres: [[-110,58,-60],[80,66,-650],[-50,62,-970]], speed: 0.056 },
   ];
-  for (const { x, y, z } of cloudDefs) {
-    const group  = new THREE.Group();
-    const puffs  = 4 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < puffs; i++) {
-      const r    = 9 + Math.random() * 9;
-      const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 7, 5), cloudMat);
-      puff.scale.y = 0.38;   // flatten into cloud shape
-      puff.position.set(
-        (Math.random() - 0.5) * 24,
-        (Math.random() - 0.5) * 4,
-        (Math.random() - 0.5) * 14,
-      );
-      group.add(puff);
+
+  const cloudMeshes = LAYERS.map(({ centres, speed }) => {
+    const geos = [];
+    for (const [cx, cy, cz] of centres) {
+      const puffs = 4 + Math.floor(Math.random() * 3);
+      for (let p = 0; p < puffs; p++) {
+        const r = 8 + Math.random() * 10;
+        const g = new THREE.SphereGeometry(r, 7, 5);
+        g.scale(1, 0.38, 1);           // flatten into a disk shape
+        g.translate(
+          cx + (Math.random() - 0.5) * 24,
+          cy + (Math.random() - 0.5) * 3,
+          cz + (Math.random() - 0.5) * 14,
+        );
+        geos.push(g);
+      }
     }
-    group.position.set(x, y, z);
-    scene.add(group);
-  }
+    const merged = mergeGeometries(geos);
+    geos.forEach(g => g.dispose());
+    const mesh = new THREE.Mesh(merged, cloudMat);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return { mesh, speed };
+  });
+
+  return cloudMeshes;
 }
 
 // ─── HUD canvas overlay ────────────────────────────────────────────────────────
@@ -1089,6 +1164,99 @@ function drawCountdownHud(ctx, W, H, frame) {
   ctx.lineWidth = Math.max(2, fsize * 0.04);
   ctx.strokeText(label, 0, 0);
   ctx.restore();
+}
+
+// ─── Distant skyline ──────────────────────────────────────────────────────────
+// Large dark boxes far from the road, merged into one draw call, give the
+// impression of a sprawling Soviet suburban cityscape behind the panelki.
+function buildSkyline(scene) {
+  const geos = [];
+  for (const side of [-1, 1]) {
+    const X_BASE = side * 95;
+    let z = 10;
+    while (z < TRACK_LENGTH * 1.05) {
+      const w  = 14 + Math.random() * 22;
+      const h  = 28 + Math.random() * 52;
+      const d  = 8  + Math.random() * 14;
+      const xO = (Math.random() - 0.5) * 28;
+      const g  = new THREE.BoxGeometry(w, h, d);
+      g.translate(X_BASE + xO, h / 2, -(z + d / 2));
+      geos.push(g);
+      z += d + 6 + Math.random() * 28;
+    }
+  }
+  const merged = mergeGeometries(geos);
+  geos.forEach(g => g.dispose());
+  // Slightly darker and cooler than the panelki — reads as depth / atmosphere
+  scene.add(new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x8a8c98 })));
+}
+
+// ─── Window + seam texture factory ────────────────────────────────────────────
+// Panel seam lines are painted as dark horizontal stripes so no separate seam
+// geometry is needed. Shared across all buildings of the same variant.
+function makeWinTex(bgHex, winHex) {
+  const FLOORS = 10, BAYS = 8;
+  const CW = 18, CH = 16;
+  const c   = document.createElement('canvas');
+  c.width   = BAYS  * CW;
+  c.height  = FLOORS * CH;
+  const ctx = c.getContext('2d');
+
+  ctx.fillStyle = bgHex;
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  for (let row = 0; row < FLOORS; row++) {
+    // Panel seam — dark stripe at each floor boundary
+    ctx.fillStyle = 'rgba(38,32,24,0.36)';
+    ctx.fillRect(0, row * CH, c.width, 2);
+
+    for (let col = 0; col < BAYS; col++) {
+      ctx.fillStyle = Math.random() > 0.28 ? winHex : '#283040';
+      ctx.fillRect(col * CW + 3, row * CH + 3, CW - 6, CH - 5);
+      if (Math.random() > 0.62) {
+        ctx.fillStyle = 'rgba(90,82,70,0.55)';
+        ctx.fillRect(col * CW + 1, row * CH + CH - 4, CW - 2, 2);
+      }
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
+// ─── Pothole decal texture ─────────────────────────────────────────────────────
+// Dark cracked oval drawn on a transparent canvas; rendered at exact sim positions.
+function makePotholeTexture() {
+  const c   = document.createElement('canvas');
+  c.width   = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, 64, 64);
+
+  // Outer shadow halo
+  ctx.fillStyle = 'rgba(10,8,5,0.45)';
+  ctx.beginPath();
+  ctx.ellipse(32, 32, 30, 26, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Pothole body
+  ctx.fillStyle = 'rgba(18,14,8,0.88)';
+  ctx.beginPath();
+  ctx.ellipse(32, 32, 22, 18, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Radiating crack lines
+  ctx.strokeStyle = 'rgba(4,3,2,0.60)';
+  ctx.lineWidth = 1.3;
+  for (let k = 0; k < 5; k++) {
+    const ang = (k / 5) * Math.PI * 2 + 0.4;
+    ctx.beginPath();
+    ctx.moveTo(32 + Math.cos(ang) * 7, 32 + Math.sin(ang) * 6);
+    ctx.lineTo(32 + Math.cos(ang) * 28, 32 + Math.sin(ang) * 23);
+    ctx.stroke();
+  }
+  return new THREE.CanvasTexture(c);
 }
 
 // ─── Confetti particle system ─────────────────────────────────────────────────
