@@ -56,6 +56,16 @@ const CAR_TINTS = [
 // Progress-bar colours matching the tint palette (CSS strings for 2D canvas)
 const HUD_COLORS = ['#e8e0d0', '#c8472b', '#2d8a3a', '#5a22bb', '#d97a10'];
 
+// ─── Car presentation constants ────────────────────────────────────────────────
+const WHEEL_RADIUS    = 0.28;  // approx world-unit wheel radius after CAR_SCALE (for rotation math)
+const JOLT_FRAMES     = 14;    // render frames the pothole impact jolt lasts
+const EXHAUST_PER_CAR = 14;    // point particles in each car's exhaust stream
+const EXHAUST_LIFE    = 18;    // render frames per exhaust particle
+const DUST_PER_BURST  = 22;    // particles per pothole dust burst
+const DUST_MAX_BURSTS = 4;     // concurrent burst slots (2 cars + margin)
+const DUST_LIFE       = 24;    // render frames per dust particle
+const TINT_STRENGTH   = 0.60;  // lerp weight toward tint hue (0=keep orig, 1=pure tint)
+
 
 // ─── Public entry ──────────────────────────────────────────────────────────────
 export function runReplay(canvas, hexSeed, {
@@ -177,6 +187,20 @@ export function runReplay(canvas, hexSeed, {
     return group;
   });
 
+  // ── Per-car animation state (presentation layer only) ────────────────────
+  // Populated by loadCarModel once the GLB is parsed.
+  const carAnims = Array.from({ length: N }, () => ({
+    wheels:     [],    // Object3D refs for wheel nodes found by name in the GLB
+    body:       null,  // model root Group — receives pitch, roll, jolt Y
+    wheelAngle: 0,     // accumulated wheel rotation (radians)
+    joltAge:    -1,    // render frames since pothole jolt began (-1 = none active)
+    prevHit:    false, // hit state last frame — used to edge-detect jolt onset
+  }));
+
+  // ── Exhaust and dust particle systems ─────────────────────────────────────
+  const exhaustSystems = makeExhaustSystems(scene, N);
+  const dustPool       = makeDustPool(scene);
+
   // ── Confetti particle system ──────────────────────────────────────────────
   const confetti = makeConfettiSystem(scene);
 
@@ -222,35 +246,60 @@ export function runReplay(canvas, hexSeed, {
             model.rotation.y = 0;
             model.position.y = 0.5;
             model.frustumCulled = false;
+
             const tint = CAR_TINTS[i % CAR_TINTS.length];
             let clonedMeshes = 0;
+
             model.traverse((child) => {
               if (child.isMesh) {
                 clonedMeshes++;
                 child.frustumCulled = false;
-                // MeshLambertMaterial: supports textures and responds to
-                // lights, but avoids heavy PBR which breaks in Telegram WebView.
-                const src = child.material;
+
+                // MeshLambertMaterial: supports textures + lighting without heavy
+                // PBR, which breaks in some Telegram WebView GL implementations.
+                const src       = child.material;
                 const baseColor = src?.color ? src.color.clone() : new THREE.Color(0xcccccc);
-                if (tint) baseColor.multiply(tint);
+                let emissive    = new THREE.Color(0x000000);
+
+                if (tint) {
+                  // Lerp toward the tint hue so the colour reads clearly at
+                  // race-camera distance even on small phone screens.
+                  baseColor.lerp(tint, TINT_STRENGTH);
+                  // Low-intensity emissive prevents the tint from going muddy in
+                  // shadow areas (no overdraw cost on Lambert).
+                  emissive = tint.clone().multiplyScalar(0.14);
+                } else {
+                  // Car 0 keeps original model colours; a tiny warm emissive
+                  // lifts it out of shadow without shifting the hue.
+                  emissive = new THREE.Color(0x14100a);
+                }
+
                 child.material = new THREE.MeshLambertMaterial({
-                  color: baseColor,
-                  map:          src?.map          ?? null,
-                  emissiveMap:  src?.emissiveMap  ?? null,
-                  emissive:     src?.emissive      ? src.emissive.clone() : new THREE.Color(0x000000),
+                  color:       baseColor,
+                  map:         src?.map         ?? null,
+                  emissiveMap: src?.emissiveMap ?? null,
+                  emissive,
                 });
                 child.castShadow    = false;
                 child.receiveShadow = false;
               }
             });
-            group.add(model);
-            console.log('[replay] car', i, 'placed at x=', group.position.x.toFixed(3),
-              '| material: MeshLambertMaterial',
-              '| group xyz:', group.position.x.toFixed(3), group.position.y.toFixed(3), group.position.z.toFixed(3),
-              '| model y:', model.position.y.toFixed(2),
-              '| scale:', model.scale.x.toFixed(2),
-              '| cloned meshes:', clonedMeshes,
+
+            // Collect wheel nodes by name for rotation animation.
+            // Falls back gracefully if the GLB uses non-standard naming.
+            const wheelNodes = [];
+            model.traverse((child) => {
+              if (/wheel|tire|tyre|rim/i.test(child.name)) wheelNodes.push(child);
+            });
+            carAnims[i].wheels = wheelNodes;
+            carAnims[i].body   = model;
+            console.log('[replay] car', i,
+              '| wheels found:', wheelNodes.length > 0 ? wheelNodes.map(w => w.name).join(', ') : 'none (rotation skipped)',
+              '| meshes:', clonedMeshes,
+              '| tint:', tint ? `#${tint.getHexString()}` : 'original',
             );
+
+            group.add(model);
           }
           console.log('[replay] camera pos:', camera.position.x.toFixed(2), camera.position.y.toFixed(2), camera.position.z.toFixed(2));
           resolve();
@@ -304,18 +353,65 @@ export function runReplay(canvas, hexSeed, {
     const next  = sim.history[Math.min(physTick + 1, sim.history.length - 1)];
     const alpha = endFrame < 0 ? (frameCount % PHYS_PER_FRAME) / PHYS_PER_FRAME : 0;
 
-    // Update car world positions — X fixed per lane, Z linearly interpolated
+    // Update car world positions and presentation animations
     for (let i = 0; i < N; i++) {
       const interpPos   = curr.positions[i] + (next.positions[i] - curr.positions[i]) * alpha;
       const interpSpeed = curr.speeds[i]    + (next.speeds[i]    - curr.speeds[i])    * alpha;
-      // Use continuous frame time for the bounce sine so it doesn't step at tick boundaries
+      const hit         = curr.hits[i];
+      const anim        = carAnims[i];
+
+      // ── Pothole jolt (edge-detect on hit onset) ───────────────────────────
+      const hitJustStarted = hit && !anim.prevHit;
+      if (hitJustStarted) anim.joltAge = 0;
+      anim.prevHit = hit;
+      if (anim.joltAge >= 0) anim.joltAge++;
+      if (anim.joltAge > JOLT_FRAMES) anim.joltAge = -1;
+
+      // ── Group position (X fixed, Y = road bounce, Z = race progress) ─────
+      // Use continuous frame time for bounce so it never steps at tick boundaries
       const bounce = endFrame < 0
         ? Math.sin((frameCount / PHYS_PER_FRAME) * 0.32 + i * 1.85) * Math.max(0, interpSpeed - 1.2) * 0.04
         : 0;
       carMeshes[i].position.x = laneX[i];
       carMeshes[i].position.y = bounce;
       carMeshes[i].position.z = -interpPos;
+
+      // ── Body pitch, roll, and jolt (applied to model root, not the group) ─
+      if (anim.body) {
+        const t = anim.joltAge >= 0 ? anim.joltAge / JOLT_FRAMES : 1;
+        const decay = Math.exp(-t * 3.5);
+        // Sharp Y kick on impact, decays over JOLT_FRAMES
+        const joltY  = anim.joltAge >= 0 ? 0.20 * decay : 0;
+        // Nose pitches down as the front wheel drops into the pothole
+        const pitchX = anim.joltAge >= 0 ? -0.09 * decay : 0;
+        // Gentle continuous sway — different phase per car so they don't rock in sync
+        const swayZ  = Math.sin((frameCount / PHYS_PER_FRAME) * 0.55 + i * 2.3) * 0.018;
+
+        anim.body.position.y = 0.5 + joltY;
+        anim.body.rotation.x = pitchX;
+        anim.body.rotation.z = swayZ;
+      }
+
+      // ── Wheel rotation ────────────────────────────────────────────────────
+      // Distance per render frame = speed / PHYS_PER_FRAME; angle = dist / radius
+      if (anim.wheels.length > 0) {
+        anim.wheelAngle -= interpSpeed / (WHEEL_RADIUS * PHYS_PER_FRAME);
+        for (const w of anim.wheels) w.rotation.x = anim.wheelAngle;
+      }
+
+      // ── Exhaust particles ─────────────────────────────────────────────────
+      if (endFrame < 0) {
+        updateExhaust(exhaustSystems[i], carMeshes[i].position, interpSpeed, frameCount);
+      }
+
+      // ── Dust burst on pothole hit onset ───────────────────────────────────
+      if (hitJustStarted && endFrame < 0) {
+        triggerDustBurst(dustPool, carMeshes[i].position);
+      }
     }
+
+    // Advance dust particles every frame regardless of car count
+    animateDust(dustPool);
 
     // Interpolated positions for the HUD progress bar (same alpha keeps bar smooth)
     const interpPositions = curr.positions.map(
@@ -1039,4 +1135,134 @@ function animateConfetti(data, winnerPos, celebFrame) {
     pos[i * 3 + 2] += vel[i].z * 0.05;
   }
   data.points.geometry.attributes.position.needsUpdate = true;
+}
+
+// ─── Exhaust particle systems ──────────────────────────────────────────────────
+// One Points object per car. Particles are emitted from the car rear each frame
+// when the car is moving; they drift upward and rearward then expire.
+function makeExhaustSystems(scene, carCount) {
+  const systems = [];
+  for (let c = 0; c < carCount; c++) {
+    const pos  = new Float32Array(EXHAUST_PER_CAR * 3);
+    const ages = new Uint8Array(EXHAUST_PER_CAR).fill(255);    // 255 = dead
+    const vel  = Array.from({ length: EXHAUST_PER_CAR }, () => ({ x: 0, y: 0, z: 0 }));
+
+    // Park all particles below the scene so dead ones are invisible
+    for (let k = 0; k < EXHAUST_PER_CAR; k++) pos[k * 3 + 1] = -500;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+      size: 0.30,
+      color: 0xb0a898,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    systems.push({ pts, pos, ages, vel, mat, next: 0 });
+  }
+  return systems;
+}
+
+function updateExhaust(sys, carPos, speed, frame) {
+  // Emit one particle every 2 frames while the car is moving above idle speed
+  const moving = speed > 0.4 && frame % 2 === 0;
+  if (moving) {
+    const idx = sys.next % EXHAUST_PER_CAR;
+    sys.next++;
+    // Rear of car is in +Z (car faces -Z / toward finish); emit just above axle height
+    sys.pos[idx * 3]     = carPos.x + (Math.random() - 0.5) * 0.22;
+    sys.pos[idx * 3 + 1] = carPos.y + 0.52;
+    sys.pos[idx * 3 + 2] = carPos.z + 1.4;    // +Z = behind car / toward camera
+    sys.ages[idx] = 0;
+    sys.vel[idx]  = {
+      x: (Math.random() - 0.5) * 0.018,
+      y: 0.038 + Math.random() * 0.032,        // float upward
+      z: 0.030 + Math.random() * 0.028,        // drift rearward
+    };
+  }
+
+  // Advance all live particles; hide dead ones
+  for (let k = 0; k < EXHAUST_PER_CAR; k++) {
+    if (sys.ages[k] >= EXHAUST_LIFE) {
+      sys.pos[k * 3 + 1] = -500;
+      continue;
+    }
+    sys.ages[k]++;
+    sys.pos[k * 3]     += sys.vel[k].x;
+    sys.pos[k * 3 + 1] += sys.vel[k].y;
+    sys.pos[k * 3 + 2] += sys.vel[k].z;
+  }
+
+  // Opacity scales with speed so slow-moving cars produce lighter wisps
+  sys.mat.opacity = Math.min(0.55, (speed / 6) * 0.55);
+  sys.pts.geometry.attributes.position.needsUpdate = true;
+}
+
+// ─── Dust burst pool ──────────────────────────────────────────────────────────
+// A pre-allocated pool of particle slots shared across all burst events.
+// Each pothole hit claims a slot (round-robin), resets its particles, and
+// lets them expand and fade over DUST_LIFE frames.
+function makeDustPool(scene) {
+  const total = DUST_MAX_BURSTS * DUST_PER_BURST;
+  const pos   = new Float32Array(total * 3);
+  const vel   = Array.from({ length: total }, () => ({ x: 0, y: 0, z: 0 }));
+  const ages  = new Uint8Array(total).fill(255);
+
+  for (let k = 0; k < total; k++) pos[k * 3 + 1] = -500;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    size: 0.52,
+    color: 0xb8aa90,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false,
+    sizeAttenuation: true,
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return { pts, pos, vel, ages, nextBurst: 0 };
+}
+
+function triggerDustBurst(pool, carPos) {
+  const slot = pool.nextBurst % DUST_MAX_BURSTS;
+  pool.nextBurst++;
+  const base = slot * DUST_PER_BURST;
+  for (let k = 0; k < DUST_PER_BURST; k++) {
+    const idx = base + k;
+    pool.pos[idx * 3]     = carPos.x + (Math.random() - 0.5) * 0.9;
+    pool.pos[idx * 3 + 1] = carPos.y + 0.15 + Math.random() * 0.2;
+    pool.pos[idx * 3 + 2] = carPos.z + (Math.random() - 0.5) * 0.9;
+    pool.ages[idx] = 0;
+    const spd = 0.05 + Math.random() * 0.07;
+    const ang = Math.random() * Math.PI * 2;
+    pool.vel[idx] = {
+      x: Math.cos(ang) * spd,
+      y: 0.045 + Math.random() * 0.055,
+      z: Math.sin(ang) * spd,
+    };
+  }
+}
+
+function animateDust(pool) {
+  const total = DUST_MAX_BURSTS * DUST_PER_BURST;
+  for (let k = 0; k < total; k++) {
+    if (pool.ages[k] >= DUST_LIFE) {
+      pool.pos[k * 3 + 1] = -500;
+      continue;
+    }
+    pool.ages[k]++;
+    pool.vel[k].y -= 0.002;                 // light gravity
+    pool.pos[k * 3]     += pool.vel[k].x;
+    pool.pos[k * 3 + 1] += pool.vel[k].y;
+    pool.pos[k * 3 + 2] += pool.vel[k].z;
+  }
+  pool.pts.geometry.attributes.position.needsUpdate = true;
 }
