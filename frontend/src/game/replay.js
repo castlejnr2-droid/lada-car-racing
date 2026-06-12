@@ -22,6 +22,7 @@ import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 const PHYS_PER_FRAME = 2;   // physics ticks per render frame
 
 const ROAD_W    = 14;   // total road width, world units
+const LANE_SPREAD = 2.4; // total lateral spread across all lanes (±0.6 for 2 cars)
 const CAR_SCALE = 1.5;  // GLB model uniform scale
 const CAR_H     = 2.0;  // approximate car height for HUD label offset
 
@@ -79,7 +80,7 @@ export function runReplay(canvas, hexSeed, {
 
   // Lane X positions: evenly spread across ROAD_W
   const laneX = Array.from({ length: N }, (_, i) =>
-    ((i + 0.5) / N - 0.5) * ROAD_W * 0.75,
+    ((i + 0.5) / N - 0.5) * LANE_SPREAD,
   );
 
   // ── Main 3D scene ─────────────────────────────────────────────────────────
