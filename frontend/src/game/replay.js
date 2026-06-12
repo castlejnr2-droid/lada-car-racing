@@ -19,7 +19,7 @@ import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-const PHYS_PER_FRAME = 2;   // physics ticks per render frame
+const PHYS_PER_FRAME = 1;   // physics ticks per render frame
 
 const ROAD_W      = 14;   // total road width, world units
 const LANE_SPREAD = 2.4;  // total lateral spread across all lanes (±0.6 for 2 cars)
