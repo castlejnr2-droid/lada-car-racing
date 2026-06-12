@@ -12,7 +12,7 @@ import { config } from '../config.js';
 
 const router = Router();
 
-const APP_URL = 'https://lada-car-racing.netlify.app';
+const APP_URL = 'https://lada-car-racing.vercel.app';
 
 async function tgCall(method, body) {
   if (!config.telegram.botToken) {

@@ -13,7 +13,7 @@ import './styles/global.css';
 // Hardcoded manifest URL — must be the absolute https URL where TON wallets
 // can fetch the manifest at runtime. Update this if the deployment domain
 // ever changes.
-const MANIFEST_URL = 'https://lada-car-racing.netlify.app/tonconnect-manifest.json';
+const MANIFEST_URL = 'https://lada-car-racing.vercel.app/tonconnect-manifest.json';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
