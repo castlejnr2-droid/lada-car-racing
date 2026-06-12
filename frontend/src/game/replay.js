@@ -539,12 +539,21 @@ export function runReplay(canvas, hexSeed, {
     const curr = sim.history[physTick];
     const next = sim.history[Math.min(physTick + 1, sim.history.length - 1)];
 
+    // ── Determine followed car (Phase 4) ─────────────────────────────────────
+    // Camera follows the leader. Computed from curr.positions (available here,
+    // before displayPos). Ordering always agrees with displayPos — interpolation
+    // and the <1-unit hold correction never flip who is ahead.
+    // Stored in `leadIdx` — reused for FOV kick, shake trigger, and camera block.
+    let leadIdx = 0;
+    for (let i = 1; i < N; i++) {
+      if (curr.positions[i] > curr.positions[leadIdx]) leadIdx = i;
+    }
+
     // ── FOV kick on speed burst (Phase 4) ────────────────────────────────────
-    // Car 0's interpolated speed drives the target FOV. After exiting a pothole
-    // the speed jumps; widening FOV for a moment sells the surge of acceleration.
-    // currentFov lerps toward the target and is applied to the camera below.
+    // Driven by the camera-followed car's speed so the effect matches what the
+    // viewer sees, regardless of which player/car is currently leading.
     {
-      const _fovSpeed  = curr.speeds[0] + (next.speeds[0] - curr.speeds[0]) * alpha;
+      const _fovSpeed  = curr.speeds[leadIdx] + (next.speeds[leadIdx] - curr.speeds[leadIdx]) * alpha;
       const _fovExcess = racing ? Math.max(0, _fovSpeed - FOV_KICK_THR) : 0;
       const _fovTarget = FOV_BASE + Math.min(FOV_KICK_MAX, _fovExcess * (FOV_KICK_MAX / 0.8));
       currentFov += (_fovTarget - currentFov) * FOV_LERP_BACK;
@@ -649,8 +658,8 @@ export function runReplay(canvas, hexSeed, {
         triggerDustBurst(dustPool, carMeshes[i].position);
       }
 
-      // ── Camera shake on hit — car 0 only (player's car), racing only ─────
-      if (hitJustStarted && endFrame < 0 && i === 0) {
+      // ── Camera shake on hit — followed car only (leadIdx), racing only ─────
+      if (hitJustStarted && endFrame < 0 && i === leadIdx) {
         camShakeAge = 0;
         camShakeDX  = (Math.random() - 0.5) * 0.18;
         camShakeDY  = Math.random() * 0.10;   // always push up (pothole jolt)
@@ -667,10 +676,7 @@ export function runReplay(canvas, hexSeed, {
     // Chase cam is always computed as the base; orbit blends in on top during
     // the celebration, and shake offsets are applied before copying to camera.
 
-    let leadIdx = 0;
-    for (let i = 1; i < N; i++) {
-      if (carMeshes[i].position.z < carMeshes[leadIdx].position.z) leadIdx = i;
-    }
+    // leadIdx already set above (from curr.positions, before car loop)
     const pz = carMeshes[leadIdx].position.z;
 
     // Base chase cam
