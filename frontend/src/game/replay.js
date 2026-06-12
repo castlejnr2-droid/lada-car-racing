@@ -66,14 +66,32 @@ export function runReplay(canvas, hexSeed, {
   // Override the pixel-art CSS hint — 3D needs smooth scaling
   canvas.style.imageRendering = 'auto';
 
+  // ── WebGL context probe ───────────────────────────────────────────────────
+  // Check raw WebGL support before handing the canvas to Three.js.
+  const ctxProbe = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  console.log('[replay] WebGL probe:', ctxProbe
+    ? `OK — ${ctxProbe instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl1'}`
+    : 'FAILED — no WebGL context available');
+  if (!ctxProbe) {
+    console.error('[replay] Aborting: WebGL not supported in this environment');
+    return () => {};
+  }
+
   // ── Renderer ──────────────────────────────────────────────────────────────
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, context: ctxProbe });
+  } catch (e) {
+    console.error('[replay] THREE.WebGLRenderer failed:', e);
+    return () => {};
+  }
   renderer.setPixelRatio(dpr);
   renderer.setSize(W, H, true);    // true: Three.js sets canvas.style.width/height explicitly
   renderer.autoClear = false;
   // Telegram WebView (and older Android WebGL) doesn't support SRGBColorSpace —
   // LinearSRGBColorSpace works in all environments.
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  console.log('[replay] renderer created. size:', W, 'x', H, 'dpr:', dpr, 'gl:', renderer.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1');
 
   // ── Physics simulation ────────────────────────────────────────────────────
   const rng   = createRng(seedFromHex(hexSeed));
