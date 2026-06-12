@@ -147,6 +147,26 @@ export function runReplay(canvas, hexSeed, {
     '| maxTextures:', renderer.capabilities.maxTextures,
     '| canvas px:', canvas.width, 'x', canvas.height);
 
+  // ── On-screen error overlay ───────────────────────────────────────────────
+  // Telegram WebView has no accessible DevTools console on most phones.
+  // Any caught error gets displayed as a fixed red panel so the user can read
+  // it back verbatim. Auto-removes after 90 s.
+  function showErrorOverlay(msg) {
+    try {
+      const el = document.createElement('div');
+      Object.assign(el.style, {
+        position: 'fixed', top: '0', left: '0', right: '0', bottom: '0',
+        zIndex: '99999', background: 'rgba(18,0,0,0.94)', color: '#ff7070',
+        fontFamily: 'monospace', fontSize: '12px', lineHeight: '1.45',
+        padding: '14px', whiteSpace: 'pre-wrap', overflowY: 'auto',
+        pointerEvents: 'none',
+      });
+      el.textContent = '[replay error]\n' + msg;
+      document.body.appendChild(el);
+      setTimeout(() => { try { document.body.removeChild(el); } catch (_) {} }, 90000);
+    } catch (_) {}
+  }
+
   // ── Physics simulation ────────────────────────────────────────────────────
   const rng   = createRng(seedFromHex(hexSeed));
   const track = buildTrack(rng, 2);
@@ -171,7 +191,16 @@ export function runReplay(canvas, hexSeed, {
   scene.add(sun);
 
   // ── Sky with drifting cloud layers (returned for per-frame animation) ─────
-  const clouds = buildSky(scene);
+  let clouds = [];
+  try {
+    clouds = buildSky(scene);
+    console.log('[replay] buildSky OK — cloud layers:', clouds.length);
+  } catch (e) {
+    console.error('[replay] buildSky FAILED:', e);
+    showErrorOverlay('buildSky failed:\n' + (e?.stack || String(e)));
+    // Fallback: plain sky colour so scene is not pitch black
+    scene.background = new THREE.Color(0xc0ccd8);
+  }
 
   // ── Main camera ───────────────────────────────────────────────────────────
   const camera  = new THREE.PerspectiveCamera(65, W / H, 0.1, TRACK_LENGTH * 2);
@@ -190,13 +219,34 @@ export function runReplay(canvas, hexSeed, {
   const hud = makeHudPlane(W, H, hudScene);
 
   // ── World geometry ────────────────────────────────────────────────────────
-  buildRoad(scene, N, laneX, track);   // track supplies exact pothole positions
-  const finishMesh = buildFinishLine(scene);
-  buildPanelki(scene, rng);
-  buildBirchTrees(scene, rng);
-  buildLampPosts(scene);
-  buildRoadFurniture(scene);
-  buildSkyline(scene);
+  // Each subsystem is individually guarded so one failure never prevents the
+  // others from running. The overlay shows exactly which one threw.
+  const _subsystems = [
+    ['buildRoad',          () => buildRoad(scene, N, laneX, track)],
+    ['buildPanelki',       () => buildPanelki(scene, rng)],
+    ['buildBirchTrees',    () => buildBirchTrees(scene, rng)],
+    ['buildLampPosts',     () => buildLampPosts(scene)],
+    ['buildRoadFurniture', () => buildRoadFurniture(scene)],
+    ['buildSkyline',       () => buildSkyline(scene)],
+  ];
+  for (const [_name, _fn] of _subsystems) {
+    try { _fn(); console.log('[replay] subsystem OK:', _name); }
+    catch (e) {
+      console.error('[replay] subsystem FAILED:', _name, e);
+      showErrorOverlay(_name + ' failed:\n' + (e?.stack || String(e)));
+    }
+  }
+
+  // finishMesh carries an emissive material that pulses during celebration.
+  // Provide a harmless stub so the main loop never null-deref if build fails.
+  let finishMesh = { material: { emissiveIntensity: 0.4 } };
+  try {
+    finishMesh = buildFinishLine(scene);
+    console.log('[replay] buildFinishLine OK');
+  } catch (e) {
+    console.error('[replay] buildFinishLine FAILED:', e);
+    showErrorOverlay('buildFinishLine failed:\n' + (e?.stack || String(e)));
+  }
 
   // ── Car model containers ─────────────────────────────────────────────────
   // Start at z=-10 so cars are in front of the camera immediately
@@ -354,6 +404,16 @@ export function runReplay(canvas, hexSeed, {
   // ── Main loop ─────────────────────────────────────────────────────────────
   function loop() {
     if (cancelled) return;
+    try {
+      loopBody();
+    } catch (e) {
+      console.error('[replay] loop crashed at frame', frameCount, ':', e);
+      showErrorOverlay('loop crash (frame ' + frameCount + '):\n' + (e?.stack || String(e)));
+      cancelled = true;   // stop RAF so the error stays visible
+    }
+  }
+
+  function loopBody() {
     frameCount++;
 
     const cdActive = frameCount <= COUNTDOWN_TOTAL;
@@ -995,6 +1055,7 @@ function buildSky(scene) {
         }
       `,
       fragmentShader: /* glsl */`
+        precision mediump float;
         uniform vec3 uHorizon;
         uniform vec3 uZenith;
         varying float vY;
