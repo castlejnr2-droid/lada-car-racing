@@ -27,7 +27,7 @@ import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 const PHYS_PER_FRAME = 2;   // render frames per physics tick advance
 
 const ROAD_W      = 14;   // total road width, world units
-const LANE_SPREAD = 2.4;  // total lateral spread across all lanes (±0.6 for 2 cars)
+const LANE_SPREAD = 7.2;  // total lateral spread across all lanes (±1.8 for 2 cars)
 const CAR_SCALE   = 1.5;  // GLB model uniform scale
 const CAR_H       = 2.0;  // approximate car height for HUD label offset
 
