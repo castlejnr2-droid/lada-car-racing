@@ -27,7 +27,7 @@ import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 const PHYS_PER_FRAME = 2;   // render frames per physics tick advance
 
 const ROAD_W      = 14;   // total road width, world units
-const LANE_SPREAD = 7.2;  // total lateral spread across all lanes (±1.8 for 2 cars)
+const LANE_SPREAD = 4.8;  // total lateral spread across all lanes (±1.2 for 2 cars)
 const CAR_SCALE   = 1.5;  // GLB model uniform scale
 const CAR_H       = 2.0;  // approximate car height for HUD label offset
 
@@ -95,6 +95,7 @@ const THEME_DAY = {
   treeTrunkColor: 0xf0ece8,  // birch bark white
   treeLeafColor:  0x4a8828,  // summer green
   cloudColor:     0xfafcff,  cloudOpacity: 0.86,
+  dustColor:      0xb8aa90,  // tan road grit
 };
 
 const THEME_DUSK = {
@@ -109,6 +110,7 @@ const THEME_DUSK = {
   treeTrunkColor: 0xd0b888,  // warm amber tint
   treeLeafColor:  0x1e3c08,  // silhouette dark foliage
   cloudColor:     0xff8844,  cloudOpacity: 0.65,
+  dustColor:      0x8a7a68,  // dark ashy grit
 };
 
 const THEME_SNOW = {
@@ -123,6 +125,7 @@ const THEME_SNOW = {
   treeTrunkColor: 0xe8e4e2,  // pale birch
   treeLeafColor:  0xdde4ee,  // bare/snow-dusted branches
   cloudColor:     0xe8ecf4,  cloudOpacity: 0.94,
+  dustColor:      0xdde8f4,  // white-grey snow puff
 };
 
 const THEMES = [THEME_DAY, THEME_DUSK, THEME_SNOW];
@@ -278,10 +281,11 @@ export function runReplay(canvas, hexSeed, {
 
   // ── Main camera ───────────────────────────────────────────────────────────
   const camera  = new THREE.PerspectiveCamera(65, W / H, 0.1, TRACK_LENGTH * 2);
-  // Cars move in -Z (into scene). Camera sits CAM_BACK behind car0 in Z.
+  // Cars move in -Z (into scene). Camera sits CAM_BACK behind the cars in Z.
+  // X starts at 0 (lane midpoint) and is updated each frame via lerp.
   // camPos.z is updated exactly each frame (no lerp) to prevent depth lag.
-  const camPos  = new THREE.Vector3(laneX[0] * 0.15, CAM_HEIGHT, CAM_BACK);
-  const lookTgt = new THREE.Vector3(laneX[0] * 0.1, 0.3, -CAM_AHEAD);
+  const camPos  = new THREE.Vector3(0, CAM_HEIGHT, CAM_BACK);
+  const lookTgt = new THREE.Vector3(0, 0.3, -CAM_AHEAD);
   camera.position.copy(camPos);
   camera.lookAt(lookTgt);
 
@@ -343,7 +347,7 @@ export function runReplay(canvas, hexSeed, {
 
   // ── Exhaust and dust particle systems ─────────────────────────────────────
   const exhaustSystems = makeExhaustSystems(scene, N);
-  const dustPool       = makeDustPool(scene);
+  const dustPool       = makeDustPool(scene, theme);
 
   // ── Confetti particle system ──────────────────────────────────────────────
   const confetti = makeConfettiSystem(scene);
@@ -679,9 +683,12 @@ export function runReplay(canvas, hexSeed, {
     // leadIdx already set above (from curr.positions, before car loop)
     const pz = carMeshes[leadIdx].position.z;
 
-    // Base chase cam
-    camPos.x += (laneX[leadIdx] * 0.15 - camPos.x) * CAM_LERP;
-    camPos.y += (CAM_HEIGHT             - camPos.y) * CAM_LERP;
+    // Base chase cam — X targets the midpoint of all lanes so both cars stay
+    // equally in frame. For symmetric ±laneX this is always 0; written as an
+    // average so it remains correct if lane count ever changes.
+    const _midLaneX = laneX.reduce((a, b) => a + b, 0) / N;
+    camPos.x += (_midLaneX - camPos.x) * CAM_LERP;
+    camPos.y += (CAM_HEIGHT - camPos.y) * CAM_LERP;
     camPos.z  = pz + CAM_BACK;
 
     // Pothole camera shake — decays exponentially over SHAKE_FRAMES
@@ -711,7 +718,7 @@ export function runReplay(canvas, hexSeed, {
       _tgtLookX = _winPos.x;  _tgtLookY = 0.9;  _tgtLookZ = _winPos.z;
       _lookLerp = 0.04 + _blend * 0.08;
     } else {
-      _tgtLookX = laneX[leadIdx] * 0.1;  _tgtLookY = 0.3;  _tgtLookZ = pz - CAM_AHEAD;
+      _tgtLookX = _midLaneX;  _tgtLookY = 0.3;  _tgtLookZ = pz - CAM_AHEAD;
       _lookLerp = 1.0;   // set directly — no accumulated lookTgt state during chase
     }
     lookTgt.x += (_tgtLookX - lookTgt.x) * _lookLerp;
@@ -1701,7 +1708,7 @@ function updateExhaust(sys, carPos, speed, frame) {
 // A pre-allocated pool of particle slots shared across all burst events.
 // Each pothole hit claims a slot (round-robin), resets its particles, and
 // lets them expand and fade over DUST_LIFE frames.
-function makeDustPool(scene) {
+function makeDustPool(scene, theme) {
   const total = DUST_MAX_BURSTS * DUST_PER_BURST;
   const pos   = new Float32Array(total * 3);
   const vel   = Array.from({ length: total }, () => ({ x: 0, y: 0, z: 0 }));
@@ -1712,12 +1719,12 @@ function makeDustPool(scene) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   const mat = new THREE.PointsMaterial({
-    size: 0.52,
-    color: 0xb8aa90,
+    size: 5,                              // fixed pixel size — sizeAttenuation off prevents
+    color: theme.dustColor,              // giant squares when a particle spawns near camera
     transparent: true,
     opacity: 0.72,
     depthWrite: false,
-    sizeAttenuation: true,
+    sizeAttenuation: false,              // world-unit size caused oversized near-cam particles
   });
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
