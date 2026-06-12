@@ -78,10 +78,11 @@ export function runReplay(canvas, hexSeed, {
   const sim   = simulate(track, rng);
   const N     = sim.history[0].positions.length;
 
-  // Lane X positions: evenly spread across ROAD_W
+  // Lane X positions: evenly spread within LANE_SPREAD (±0.6 for 2 cars)
   const laneX = Array.from({ length: N }, (_, i) =>
     ((i + 0.5) / N - 0.5) * LANE_SPREAD,
   );
+  console.log('[replay] laneX computed:', laneX.map((x, i) => `car${i}=x${x.toFixed(3)}`).join(', '));
 
   // ── Main 3D scene ─────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
@@ -187,8 +188,8 @@ export function runReplay(canvas, hexSeed, {
               }
             });
             group.add(model);
-            console.log('[replay] car', i,
-              '| group xyz:', group.position.x.toFixed(2), group.position.y.toFixed(2), group.position.z.toFixed(2),
+            console.log('[replay] car', i, 'placed at x=', group.position.x.toFixed(3),
+              '| group xyz:', group.position.x.toFixed(3), group.position.y.toFixed(3), group.position.z.toFixed(3),
               '| model y:', model.position.y.toFixed(2),
               '| scale:', model.scale.x.toFixed(2),
               '| cloned meshes:', clonedMeshes,
