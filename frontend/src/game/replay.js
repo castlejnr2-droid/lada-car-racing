@@ -560,11 +560,11 @@ function buildBirchTrees(scene, rng) {
     for (let i = 0; i < COUNT; i++) {
       const wz      = -(i / COUNT) * TRACK_LENGTH * 1.15;
       const jitter  = (rng() - 0.5) * 2.0;   // slight stagger off the line
-      const trunkH  = 5.5 + rng() * 2.5;
+      const trunkH  = 7.0 + rng() * 2.0;  // taller so trunk shows below crown
 
-      // White birch trunk
+      // White birch trunk — thicker so it reads clearly from road
       const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.09, 0.14, trunkH, 6),
+        new THREE.CylinderGeometry(0.18, 0.26, trunkH, 6),
         trunkMat,
       );
       trunk.position.set(sx + jitter, trunkH / 2, wz);
@@ -575,20 +575,20 @@ function buildBirchTrees(scene, rng) {
       for (let p = 0; p < patches; p++) {
         const py = ((p + 1) / (patches + 1)) * trunkH;
         const ring = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.10, 0.10, 0.22, 6),
+          new THREE.CylinderGeometry(0.19, 0.19, 0.28, 6),
           barkMat,
         );
         ring.position.set(sx + jitter, py, wz);
         scene.add(ring);
       }
 
-      // Leafy crown — 3–5 overlapping spheres for a full rounded shape
+      // Leafy crown — starts above the trunk top so trunk stays visible
       const puffs = 3 + Math.floor(rng() * 3);
       for (let p = 0; p < puffs; p++) {
-        const r  = 0.9 + rng() * 0.7;
-        const cx = (rng() - 0.5) * 1.4;
-        const cy = trunkH + 0.2 + rng() * 1.6;
-        const cz = (rng() - 0.5) * 1.4;
+        const r  = 1.1 + rng() * 0.8;
+        const cx = (rng() - 0.5) * 1.6;
+        const cy = trunkH + 1.2 + rng() * 1.5;  // raised: crown starts 1.2 above trunk top
+        const cz = (rng() - 0.5) * 1.6;
         const puff = new THREE.Mesh(
           new THREE.SphereGeometry(r, 6, 5),
           leafMat,
@@ -885,8 +885,12 @@ function drawHud(ctx, W, H, N, positions, playerNames, carMeshes, camera, cdFram
     const name = playerNames[i];
     if (!name) continue;
 
+    // Project a point just above the car roof (~1.0 world units above the group).
+    // Keeping Y small avoids the label drifting up/ahead due to perspective
+    // from the low camera (Y=2.5). The group Y is ~0, model offset adds 0.5,
+    // scaled car height ~1.0 — so Y=1.0 puts the label just above the roof.
     const above = carMeshes[i].position.clone();
-    above.y += CAR_H * 1.3;
+    above.y = 1.0;
     const ndc = above.project(camera);
     if (ndc.z >= 1.0) continue;   // behind camera
 
