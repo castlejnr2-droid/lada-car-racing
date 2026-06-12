@@ -214,7 +214,7 @@ export function runReplay(canvas, hexSeed, {
           for (const [i, group] of carMeshes.entries()) {
             const model = gltf.scene.clone(true);
             model.scale.setScalar(CAR_SCALE);
-            model.rotation.y = Math.PI;
+            model.rotation.y = 0;
             model.position.y = 0.5;
             model.frustumCulled = false;
             const tint = CAR_TINTS[i % CAR_TINTS.length];
