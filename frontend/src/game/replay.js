@@ -66,21 +66,40 @@ export function runReplay(canvas, hexSeed, {
   // Override the pixel-art CSS hint — 3D needs smooth scaling
   canvas.style.imageRendering = 'auto';
 
+  // ── Canvas sanity ─────────────────────────────────────────────────────────
+  console.log('[replay] canvas CSS size:', W, 'x', H,
+    '| pixel size:', canvas.width, 'x', canvas.height,
+    '| dpr:', dpr,
+    '| visibility:', canvas.style.visibility || 'unset',
+    '| display:', canvas.style.display || 'unset');
+
   // ── WebGL context probe ───────────────────────────────────────────────────
-  // Check raw WebGL support before handing the canvas to Three.js.
-  const ctxProbe = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-  console.log('[replay] WebGL probe:', ctxProbe
-    ? `OK — ${ctxProbe instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl1'}`
-    : 'FAILED — no WebGL context available');
-  if (!ctxProbe) {
-    console.error('[replay] Aborting: WebGL not supported in this environment');
+  // Probe availability without saving the context — let Three.js create its
+  // own context below. Using `instanceof` on WebGL2RenderingContext is unsafe
+  // in some embedded WebViews where the global may not be defined.
+  let probeType = 'none';
+  try {
+    const gl2 = canvas.getContext('webgl2');
+    if (gl2) { probeType = 'webgl2'; }
+    else {
+      const gl1 = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl1) probeType = 'webgl1';
+    }
+  } catch (e) {
+    console.warn('[replay] WebGL probe threw:', e);
+  }
+  console.log('[replay] WebGL probe:', probeType);
+  if (probeType === 'none') {
+    console.error('[replay] Aborting: no WebGL context available');
     return () => {};
   }
 
   // ── Renderer ──────────────────────────────────────────────────────────────
+  // Do NOT pass `context` — let Three.js call getContext itself so it gets
+  // the correct attributes (antialias etc.) and manages its own state.
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, context: ctxProbe });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   } catch (e) {
     console.error('[replay] THREE.WebGLRenderer failed:', e);
     return () => {};
@@ -91,7 +110,9 @@ export function runReplay(canvas, hexSeed, {
   // Telegram WebView (and older Android WebGL) doesn't support SRGBColorSpace —
   // LinearSRGBColorSpace works in all environments.
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  console.log('[replay] renderer created. size:', W, 'x', H, 'dpr:', dpr, 'gl:', renderer.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1');
+  console.log('[replay] renderer OK — gl:', renderer.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1',
+    '| maxTextures:', renderer.capabilities.maxTextures,
+    '| canvas px:', canvas.width, 'x', canvas.height);
 
   // ── Physics simulation ────────────────────────────────────────────────────
   const rng   = createRng(seedFromHex(hexSeed));
@@ -323,6 +344,17 @@ export function runReplay(canvas, hexSeed, {
     renderer.render(scene, camera);
     renderer.clearDepth();
     renderer.render(hudScene, hudCamera);
+
+    if (frameCount === 1) {
+      const info = renderer.info.render;
+      console.log('[replay] frame 1 render stats — calls:', info.calls,
+        '| triangles:', info.triangles,
+        '| scene children:', scene.children.length,
+        '| cam pos:', camera.position.x.toFixed(2), camera.position.y.toFixed(2), camera.position.z.toFixed(2),
+        '| cam target:', lookTgt.x.toFixed(2), lookTgt.y.toFixed(2), lookTgt.z.toFixed(2),
+        '| car0 pos:', carMeshes[0]?.position.x.toFixed(2), carMeshes[0]?.position.y.toFixed(2), carMeshes[0]?.position.z.toFixed(2),
+        '| car0 children:', carMeshes[0]?.children.length);
+    }
 
     if (endFrame >= END_TOTAL) { onComplete?.(); return; }
     rafId = requestAnimationFrame(loop);
