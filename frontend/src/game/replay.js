@@ -71,6 +71,9 @@ export function runReplay(canvas, hexSeed, {
   renderer.setPixelRatio(dpr);
   renderer.setSize(W, H, true);    // true: Three.js sets canvas.style.width/height explicitly
   renderer.autoClear = false;
+  // Telegram WebView (and older Android WebGL) doesn't support SRGBColorSpace —
+  // LinearSRGBColorSpace works in all environments.
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 
   // ── Physics simulation ────────────────────────────────────────────────────
   const rng   = createRng(seedFromHex(hexSeed));
@@ -181,14 +184,20 @@ export function runReplay(canvas, hexSeed, {
               if (child.isMesh) {
                 clonedMeshes++;
                 child.frustumCulled = false;
-                if (child.material) {
-                  child.material = child.material.clone();
-                  if (tint) child.material.color.multiply(tint);
-                }
+                // Use MeshBasicMaterial — no lighting required, works in all
+                // WebGL environments including Telegram's WebView.
+                const baseColor = child.material?.color
+                  ? child.material.color.clone()
+                  : new THREE.Color(0xcccccc);
+                if (tint) baseColor.multiply(tint);
+                child.material = new THREE.MeshBasicMaterial({ color: baseColor });
+                child.castShadow    = false;
+                child.receiveShadow = false;
               }
             });
             group.add(model);
             console.log('[replay] car', i, 'placed at x=', group.position.x.toFixed(3),
+              '| material: MeshBasicMaterial',
               '| group xyz:', group.position.x.toFixed(3), group.position.y.toFixed(3), group.position.z.toFixed(3),
               '| model y:', model.position.y.toFixed(2),
               '| scale:', model.scale.x.toFixed(2),
