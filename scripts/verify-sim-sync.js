@@ -115,11 +115,13 @@ assertConstants();
 
 let mismatches = 0;
 const firstMismatches = [];
+const wins = [0, 0];   // wins[0] = player 1 (lane 0) wins, wins[1] = player 2 (lane 1) wins
 
 for (let i = 0; i < N; i++) {
   const seed = randomSeedHex();
   const fe   = frontendWinner(seed);
   const be   = backendWinner(seed);
+  wins[fe]++;
   if (fe !== be) {
     mismatches++;
     if (firstMismatches.length < 5) {
@@ -127,6 +129,13 @@ for (let i = 0; i < N; i++) {
     }
   }
 }
+
+// Win-split report — lane 0 and lane 1 have independent pothole layouts so a
+// small asymmetry is expected. A large skew would indicate a structural bias
+// worth investigating (but never change sim logic based on this alone).
+const p1pct = (wins[0] / N * 100).toFixed(2);
+const p2pct = (wins[1] / N * 100).toFixed(2);
+console.log(`Win split (${N} seeds): player1 (lane 0) ${p1pct}%  |  player2 (lane 1) ${p2pct}%`);
 
 if (mismatches === 0) {
   console.log(`OK  ${N} seeds tested — frontend and backend produce identical winners.`);
