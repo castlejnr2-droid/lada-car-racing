@@ -8,7 +8,7 @@
 
 export const TRACK_LENGTH      = 1200;
 export const POTHOLES_PER_LANE = 14;
-const BASE_SPEED               = 3;
+const BASE_SPEED               = 6;  // MUST match _BASE_SPEED in backend/src/services/events.js
 const POTHOLE_PENALTY          = 0.35;
 const POTHOLE_HIT_RADIUS       = 5;
 const MAX_TICKS                = 600;

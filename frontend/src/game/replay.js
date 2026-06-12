@@ -19,7 +19,11 @@ import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-const PHYS_PER_FRAME = 1;   // physics ticks per render frame
+// With BASE_SPEED=6 the sim finishes in ~half the ticks compared to BASE_SPEED=3.
+// Setting PHYS_PER_FRAME=2 means "advance 1 physics tick every 2 render frames",
+// which restores the original ~6-7 s visual race duration.
+// Presentation layer only — never touches simulation constants.
+const PHYS_PER_FRAME = 2;   // render frames per physics tick advance
 
 const ROAD_W      = 14;   // total road width, world units
 const LANE_SPREAD = 2.4;  // total lateral spread across all lanes (±0.6 for 2 cars)
@@ -292,18 +296,31 @@ export function runReplay(canvas, hexSeed, {
       }
     }
 
-    const state = sim.history[physTick];
+    // Interpolate between the current and next physics ticks so car motion stays
+    // smooth at the effective ~30 Hz tick rate rendered at 60 fps.
+    // alpha = fractional progress within this tick interval (0..1).
+    // During the end celebration physTick is frozen, so alpha stays 0.
+    const curr  = sim.history[physTick];
+    const next  = sim.history[Math.min(physTick + 1, sim.history.length - 1)];
+    const alpha = endFrame < 0 ? (frameCount % PHYS_PER_FRAME) / PHYS_PER_FRAME : 0;
 
-    // Update car world positions — X is fixed per lane, Z is race progress
+    // Update car world positions — X fixed per lane, Z linearly interpolated
     for (let i = 0; i < N; i++) {
+      const interpPos   = curr.positions[i] + (next.positions[i] - curr.positions[i]) * alpha;
+      const interpSpeed = curr.speeds[i]    + (next.speeds[i]    - curr.speeds[i])    * alpha;
+      // Use continuous frame time for the bounce sine so it doesn't step at tick boundaries
       const bounce = endFrame < 0
-        ? Math.sin(physTick * 0.32 + i * 1.85) * Math.max(0, state.speeds[i] - 1.2) * 0.04
+        ? Math.sin((frameCount / PHYS_PER_FRAME) * 0.32 + i * 1.85) * Math.max(0, interpSpeed - 1.2) * 0.04
         : 0;
-      const progress = state.positions[i];   // scalar 0 → TRACK_LENGTH
-      carMeshes[i].position.x = laneX[i];   // FIXED lane offset, never changes
-      carMeshes[i].position.y = bounce;      // small vertical bounce on rough road
-      carMeshes[i].position.z = -progress;  // race moves in -Z direction
+      carMeshes[i].position.x = laneX[i];
+      carMeshes[i].position.y = bounce;
+      carMeshes[i].position.z = -interpPos;
     }
+
+    // Interpolated positions for the HUD progress bar (same alpha keeps bar smooth)
+    const interpPositions = curr.positions.map(
+      (p, i) => p + (next.positions[i] - p) * alpha,
+    );
 
     // Follow the leading car (furthest in -Z = most negative Z).
     // Z tracks exactly to prevent sideways drift from lag.
@@ -331,7 +348,7 @@ export function runReplay(canvas, hexSeed, {
     // Draw 2D HUD onto the overlay canvas
     drawHud(
       hud.ctx, W, H, N,
-      state.positions, playerNames,
+      interpPositions, playerNames,
       carMeshes, camera,
       cdActive ? frameCount : -1,
       celebFrame,

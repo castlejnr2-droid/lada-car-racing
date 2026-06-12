@@ -18,6 +18,7 @@ export default function Race() {
   const address = useTonAddress();
   const { send } = useTonSender();
   const replayStopRef = useRef(null);
+  const simRef = useRef(null);   // captured via onTick for defensive winner check
   const [canvasEl, setCanvasEl] = useState(null);
   const canvasRef = useCallback((el) => setCanvasEl(el), []);
 
@@ -56,8 +57,27 @@ export default function Race() {
     if (race?.state !== 'settled' && race?.state !== 'active') return;
     if (!race.combined_seed || !canvasEl) return;
     const shortAddr = (a) => a ? `${a.slice(0, 4)}…${a.slice(-4)}` : '???';
+    simRef.current = null;
     replayStopRef.current = runReplay(canvasEl, race.combined_seed, {
+      onTick: (_tick, sim) => { simRef.current = sim; },
       onComplete: () => {
+        // Defensive check: local sim winner must match the server's settled winner.
+        // The server is authoritative (it signed the payout). A mismatch here means
+        // the two physics implementations have drifted — investigate immediately.
+        if (race.winner && simRef.current) {
+          const serverWinnerIdx = race.winner === race.player1 ? 0
+            : race.winner === race.player2 ? 1
+            : -1;
+          const localWinnerIdx = simRef.current.winner;
+          if (serverWinnerIdx !== -1 && localWinnerIdx !== serverWinnerIdx) {
+            console.error(
+              '[race] WINNER MISMATCH — local sim:', localWinnerIdx,
+              '| server:', serverWinnerIdx,
+              '| seed:', race.combined_seed,
+              ' — frontend physics is out of sync with backend. ResultScreen shows server winner.',
+            );
+          }
+        }
         setReplayDone(true);
         haptic.success();
       },
