@@ -202,20 +202,24 @@ export function runReplay(canvas, hexSeed, {
               if (child.isMesh) {
                 clonedMeshes++;
                 child.frustumCulled = false;
-                // Use MeshBasicMaterial — no lighting required, works in all
-                // WebGL environments including Telegram's WebView.
-                const baseColor = child.material?.color
-                  ? child.material.color.clone()
-                  : new THREE.Color(0xcccccc);
+                // MeshLambertMaterial: supports textures and responds to
+                // lights, but avoids heavy PBR which breaks in Telegram WebView.
+                const src = child.material;
+                const baseColor = src?.color ? src.color.clone() : new THREE.Color(0xcccccc);
                 if (tint) baseColor.multiply(tint);
-                child.material = new THREE.MeshBasicMaterial({ color: baseColor });
+                child.material = new THREE.MeshLambertMaterial({
+                  color: baseColor,
+                  map:          src?.map          ?? null,
+                  emissiveMap:  src?.emissiveMap  ?? null,
+                  emissive:     src?.emissive      ? src.emissive.clone() : new THREE.Color(0x000000),
+                });
                 child.castShadow    = false;
                 child.receiveShadow = false;
               }
             });
             group.add(model);
             console.log('[replay] car', i, 'placed at x=', group.position.x.toFixed(3),
-              '| material: MeshBasicMaterial',
+              '| material: MeshLambertMaterial',
               '| group xyz:', group.position.x.toFixed(3), group.position.y.toFixed(3), group.position.z.toFixed(3),
               '| model y:', model.position.y.toFixed(2),
               '| scale:', model.scale.x.toFixed(2),
