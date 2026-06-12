@@ -203,6 +203,27 @@ export function runReplay(canvas, hexSeed, {
   const sim   = simulate(track, rng);
   const N     = sim.history[0].positions.length;
 
+  // ── Pre-compute precise finish times (fractional playhead tick) ───────────
+  // The sim winner is determined by highest final overshoot position, which can
+  // differ from who crossed the line first. We store exact crossing times so
+  // the presentation layer can guarantee the declared winner visually crosses
+  // first. Physics and winner are untouched — this is read-only from history.
+  const finishPlayheads = Array.from({ length: N }, (_, i) => {
+    for (let t = 0; t < sim.history.length; t++) {
+      if (sim.history[t].positions[i] >= TRACK_LENGTH) {
+        if (t === 0) return 0;
+        const prev = sim.history[t - 1].positions[i];
+        const here = sim.history[t].positions[i];
+        // Sub-tick: linear interpolation to exact crossing moment
+        return (t - 1) + (TRACK_LENGTH - prev) / (here - prev);
+      }
+    }
+    return sim.history.length - 1;   // DNF (timeout)
+  });
+  console.log('[replay] finish times:',
+    finishPlayheads.map((t, i) => `car${i}=${t.toFixed(2)}`).join(' '),
+    '| winner=car' + sim.winner);
+
   // Lane X positions: evenly spread within LANE_SPREAD (±0.6 for 2 cars)
   const laneX = Array.from({ length: N }, (_, i) =>
     ((i + 0.5) / N - 0.5) * LANE_SPREAD,
@@ -273,9 +294,9 @@ export function runReplay(canvas, hexSeed, {
     }
   }
 
-  // finishMesh carries an emissive material that pulses during celebration.
+  // finishMesh carries emissive materials that pulse during celebration.
   // Provide a harmless stub so the main loop never null-deref if build fails.
-  let finishMesh = { material: { emissiveIntensity: 0.4 } };
+  let finishMesh = { material: { emissiveIntensity: 0.4 }, bannerMaterial: { emissiveIntensity: 0.3 } };
   try {
     finishMesh = buildFinishLine(scene);
     console.log('[replay] buildFinishLine OK');
@@ -486,9 +507,52 @@ export function runReplay(canvas, hexSeed, {
     const curr = sim.history[physTick];
     const next = sim.history[Math.min(physTick + 1, sim.history.length - 1)];
 
+    // ── Position correction (presentation layer only) ─────────────────────────
+    // Raw sim positions can place a non-winner car further past the finish line
+    // than the declared winner (winner won by biggest overshoot, not first crossing).
+    // Fix: hold non-winner cars at the line until the winner crosses, then animate
+    // all cars to rank-ordered resting positions during the end sequence.
+    // Physics, winner determination, and onTick data are completely untouched.
+
+    // Pass 1 — raw interpolated positions for this frame
+    const rawPos = Array.from({ length: N }, (_, i) =>
+      curr.positions[i] + (next.positions[i] - curr.positions[i]) * alpha,
+    );
+    const winnerRaw = rawPos[sim.winner];
+
+    // Pass 2 — build displayPos with visual corrections
+    const displayPos = [...rawPos];
+
+    if (racing) {
+      // Hold a non-winner car at the finish line while the winner hasn't crossed yet.
+      // This covers the 1-2 frame window when a small-overshoot car would otherwise
+      // appear to cross before the declared winner.
+      for (let i = 0; i < N; i++) {
+        if (i !== sim.winner && displayPos[i] >= TRACK_LENGTH && winnerRaw < TRACK_LENGTH) {
+          displayPos[i] = TRACK_LENGTH - 0.5;
+        }
+      }
+    }
+
+    if (endFrame >= 0) {
+      // Animate all cars to rank-ordered resting positions over END_DRIVE frames.
+      // Winner always rests furthest past the line; non-winners stay clearly behind.
+      const t    = Math.min(1, endFrame / END_DRIVE);
+      const ease = t * t * (3 - 2 * t);   // smoothstep
+      for (let i = 0; i < N; i++) {
+        const isWinner     = i === sim.winner;
+        const rawOvershoot = Math.max(0, rawPos[i] - TRACK_LENGTH);
+        // Winner: at least 40 units past; non-winner: at most 18 units past
+        const targetOvershoot = isWinner
+          ? Math.max(rawOvershoot, 40)
+          : Math.min(rawOvershoot, 18);
+        displayPos[i] = rawPos[i] + (TRACK_LENGTH + targetOvershoot - rawPos[i]) * ease;
+      }
+    }
+
     // Update car world positions and presentation animations
     for (let i = 0; i < N; i++) {
-      const interpPos   = curr.positions[i] + (next.positions[i] - curr.positions[i]) * alpha;
+      const interpPos   = displayPos[i];   // corrected display position (see above)
       const interpSpeed = curr.speeds[i]    + (next.speeds[i]    - curr.speeds[i])    * alpha;
       const hit         = curr.hits[i];
       const anim        = carAnims[i];
@@ -546,10 +610,8 @@ export function runReplay(canvas, hexSeed, {
     // Advance dust particles every frame regardless of car count
     animateDust(dustPool);
 
-    // Interpolated positions for the HUD progress bar (same alpha keeps bar smooth)
-    const interpPositions = curr.positions.map(
-      (p, i) => p + (next.positions[i] - p) * alpha,
-    );
+    // HUD progress bar uses corrected display positions so bar rank agrees with visual
+    const interpPositions = displayPos;
 
     // Follow the leading car (furthest in -Z = most negative Z).
     // Z tracks exactly to prevent sideways drift from lag.
@@ -565,8 +627,10 @@ export function runReplay(canvas, hexSeed, {
     lookTgt.set(laneX[leadIdx] * 0.1, 0.3, pz - CAM_AHEAD);
     camera.lookAt(lookTgt);
 
-    // Finish line glow pulses during celebration
-    finishMesh.material.emissiveIntensity = endFrame >= END_DRIVE ? 2.0 : 0.4;
+    // Finish line glow pulses during celebration (both floor decal and banner)
+    const finishGlow = endFrame >= END_DRIVE ? 2.0 : 0.4;
+    finishMesh.material.emissiveIntensity       = finishGlow;
+    finishMesh.bannerMaterial.emissiveIntensity = finishGlow * 0.7;
 
     // Confetti burst for winner
     const celebFrame = endFrame >= END_DRIVE ? endFrame - END_DRIVE : -1;
@@ -581,6 +645,7 @@ export function runReplay(canvas, hexSeed, {
       carMeshes, camera,
       cdActive ? frameCount : -1,
       celebFrame,
+      sim.winner,
     );
     hud.tex.needsUpdate = true;
 
@@ -742,7 +807,34 @@ function buildFinishLine(scene) {
   bar.position.set(0, 6, -TRACK_LENGTH);
   scene.add(bar);
 
-  return mesh;
+  // ── Hanging checkered banner (Soviet racing aesthetic) ────────────────────
+  // Large enough to be clearly visible from the approach camera.
+  const bc   = document.createElement('canvas');
+  bc.width   = 256; bc.height = 64;
+  const bctx = bc.getContext('2d');
+  const bsq  = 32;
+  for (let col = 0; col < bc.width / bsq; col++) {
+    for (let row = 0; row < bc.height / bsq; row++) {
+      bctx.fillStyle = (col + row) % 2 === 0 ? '#f0ece4' : '#111118';
+      bctx.fillRect(col * bsq, row * bsq, bsq, bsq);
+    }
+  }
+  // Red border stripe — Soviet racing aesthetic
+  bctx.fillStyle = '#cc1111';
+  bctx.fillRect(0, 0, bc.width, 6);
+  bctx.fillRect(0, bc.height - 6, bc.width, 6);
+  const bannerTex = new THREE.CanvasTexture(bc);
+  const bannerMaterial = new THREE.MeshLambertMaterial({
+    map: bannerTex,
+    emissive: new THREE.Color(0xffd700),
+    emissiveIntensity: 0.3,
+    side: THREE.DoubleSide,
+  });
+  const banner = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, 1.6), bannerMaterial);
+  banner.position.set(0, 5.2, -TRACK_LENGTH);
+  scene.add(banner);
+
+  return { material: mat, bannerMaterial };
 }
 
 // ─── Soviet panel apartment blocks (panelki) ───────────────────────────────────
@@ -1171,7 +1263,7 @@ function makeHudPlane(W, H, hudScene) {
 }
 
 // ─── HUD drawing ──────────────────────────────────────────────────────────────
-function drawHud(ctx, W, H, N, positions, playerNames, carMeshes, camera, cdFrame, celebFrame) {
+function drawHud(ctx, W, H, N, positions, playerNames, carMeshes, camera, cdFrame, celebFrame, winnerIdx) {
   ctx.clearRect(0, 0, W, H);
 
   // ── Progress bar (top of screen) ──────────────────────────────────────────
@@ -1207,13 +1299,30 @@ function drawHud(ctx, W, H, N, positions, playerNames, carMeshes, camera, cdFram
     if (sx < -100 || sx > W + 100 || sy < 0 || sy > H) continue;
 
     ctx.save();
-    ctx.font = 'bold 13px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.shadowColor = 'rgba(0,0,0,0.95)';
-    ctx.shadowBlur = 5;
     ctx.shadowOffsetX = 1;
     ctx.shadowOffsetY = 1;
+
+    // WINNER badge — shown above the winning car during celebration
+    if (celebFrame >= 0 && i === winnerIdx) {
+      const pulse   = 0.75 + 0.25 * Math.sin(celebFrame * 0.28);
+      const fappear = Math.min(1, celebFrame / 10);
+      const wsize   = Math.round(Math.min(W, H) * 0.068);
+      ctx.font = `bold ${wsize}px monospace`;
+      ctx.globalAlpha = fappear * pulse;
+      ctx.fillStyle = '#ffd700';
+      ctx.shadowColor = '#ff8800';
+      ctx.shadowBlur = 20;
+      ctx.fillText('WINNER', sx, sy - 18);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
+
+    // Player name label
+    ctx.font = 'bold 13px monospace';
+    ctx.shadowColor = 'rgba(0,0,0,0.95)';
+    ctx.shadowBlur = 5;
     ctx.fillStyle = '#ffffff';
 
     let label = name;
