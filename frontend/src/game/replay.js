@@ -597,11 +597,13 @@ function buildRoad(scene, N, laneX, track) {
   const midZ    = (Z_START + Z_END) / 2;
 
   // Asphalt, grass, earth — colors from SCENE_THEME
-  scene.add(Object.assign(
-    new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, LEN),
-      new THREE.MeshLambertMaterial({ color: SCENE_THEME.roadColor })),
-    { rotation: new THREE.Euler(-Math.PI / 2, 0, 0), position: new THREE.Vector3(0, 0, midZ) },
-  ));
+  const roadMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(ROAD_W, LEN),
+    new THREE.MeshLambertMaterial({ color: SCENE_THEME.roadColor }),
+  );
+  roadMesh.rotation.x = -Math.PI / 2;
+  roadMesh.position.set(0, 0, midZ);
+  scene.add(roadMesh);
 
   const GRASS_W = 7;
   const grassMat = new THREE.MeshLambertMaterial({ color: SCENE_THEME.groundColor });
