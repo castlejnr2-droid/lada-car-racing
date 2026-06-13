@@ -229,7 +229,7 @@ SLOWMO_FACTOR=3  SLOWMO_START=0.90  SLOWMO_TICKS=10
 FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 ```
 
-### Phase 5 — HUD Polish — DONE, awaiting device test
+### Phase 5 — HUD Polish — DONE, device-verified
 
 **Features implemented**:
 
@@ -237,7 +237,9 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 - **Live rank badges**: `1ST` / `2ND` drawn both in bar gutter (7px, gold/grey) and below each car name label (10px, same colors). Hidden during celebration.
 - **Speed readout**: `Math.round(interpSpeeds[leadIdx] * 10)` km/h, shown right-of-bar-strip during racing only. Scale factor 10: BASE_SPEED=6 → 60 km/h.
 - **Countdown upgrade**: per-number colors — red (`#ff5544`) for 3, amber (`#ffaa22`) for 2, green (`#44ee44`) for 1, bright green (`#00ff88`) for GO. Brief translucent green screen flash at GO onset (7 frames, fades from alpha 0.32).
-- **Results banner**: appears at `celebFrame=20`, fades in over 12 frames. Dark panel with winner-color border. Winner name + " wins" on first line (truncated if long). Optional `payoutLabel` string on second line (real races only — `Race.jsx` passes `"Prize: X.XX LADA"` computed as `BigInt(race.pot) * 95n / 100n`; demo races pass nothing). No-hyphen compliant throughout.
+- **Results banner**: appears at `celebFrame=20`, fades in over 12 frames. Dark panel with winner-color border. Winner name + " wins" on first line (truncated if long). Optional `payoutLabel` string on second line (real races only — `Race.jsx` passes `"Prize: X.XX LADA"` computed as `BigInt(race.pot) - BigInt(race.house_fee || 0)`, matching `ResultScreen.jsx` exactly; demo races pass nothing). No-hyphen compliant throughout.
+
+**Payout derivation bug fixed (commit fd0ed8d)**: `Race.jsx` was computing payout as `pot * 95n / 100n` (client-side hardcoded 95%) rather than the server-authoritative `pot - house_fee`. Fixed to match `ResultScreen.jsx` exactly so both screens always show the same number for the same race.
 
 **`drawHud` signature**: `(ctx, W, H, N, positions, speeds, leadIdx, playerNames, carMeshes, camera, cdFrame, celebFrame, winnerIdx, payoutLabel)`
 
@@ -245,22 +247,29 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 
 **All HUD reads from sim history + interpolated display values — no new data sources.**
 
-### Phase 6 — Sound — NOT STARTED
-**Goal**: Lightweight audio. Must init only after a user tap. Fail silently if WebAudio unavailable.
+### Phase 6 — Sound — DONE, awaiting device test
 
-**Features**:
-- **Engine pitch**: WebAudio oscillator, frequency mapped to `interpSpeed`. Base freq ~80Hz,
-  scales to ~180Hz at full speed. Applied per car visible to camera (just car 0 for simplicity).
-- **Pothole thud**: short noise burst triggered on `hitJustStarted`, -12dB, 0.15s duration
-- **Countdown beeps**: 3 short tones (A4) on each count number, higher/longer tone on GO
-- **Finish fanfare**: short ascending arpeggio on `onComplete`
-- **Mute toggle**: persisted to `localStorage`. Small icon in corner (can be a HUD element).
+**Features implemented**:
 
-**Implementation notes**:
-- Create `frontend/src/game/audio.js` — separate file, imported by `replay.js`
-- `initAudio()` called on first user gesture (tap "Watch Race" button in Race.jsx)
-- All synthesis via Web Audio API oscillators + GainNodes — zero asset downloads
-- `audio.js` must export a `muteToggle()` function and a `isMuted()` getter
+- **Engine sound**: Sawtooth oscillator, low-pass filtered at 480 Hz (Q=1.4). Frequency `80 + speed*16` Hz (idle ~80 Hz, full speed ~180 Hz). Gain ramps in when racing, ramps out slowly at end sequence. Created fresh each race via `engineStart()`, stopped via `engineStop()` on cleanup.
+- **Pothole thud**: 0.14s white noise burst through 190 Hz low-pass filter, gain exponential decay. Fired on `hitJustStarted && i === leadIdx` (camera-followed car only, same gate as camera shake).
+- **Countdown beeps**: Step transition detected each frame (`_lastBeepStep`). Digits 3/2/1 → short 880 Hz square tick (0.07s). GO → rising sine 880→1320 Hz (0.28s). `countdownBeep(num)` where num=3/2/1/0.
+- **Finish fanfare**: C4 E4 G4 C5 ascending arpeggio (triangle wave, 0.11s spacing, 0.22s envelope each note). Fires once at `endFrame === END_DRIVE` via `_fanfareFired` flag.
+- **Mute toggle**: `position: fixed; bottom: 16px; left: 12px` button injected into `document.body` by `runReplay`. Shows 🔊/🔇. State persisted to `localStorage` key `lada_muted`. Readable before AudioContext exists (initialized at module load from localStorage). Removed on replay cleanup.
+
+**Implementation**:
+- New file: `frontend/src/game/audio.js` — all synthesis, zero asset downloads
+- `replay.js` imports 8 audio functions; `Race.jsx` and `DemoRace.jsx` unchanged
+- `resumeAudio()` called at `runReplay` entry + on canvas `touchstart` (catches late-gesture case in Telegram WebView). If AudioContext unavailable, every function is a silent no-op.
+- `_ctx`, `_master` are module-level (survive across DemoRace auto-loops). Engine oscillator is per-race (recreated each `engineStart()`).
+
+**Audio event wiring in `loopBody`**:
+| Event | Trigger | Function |
+|---|---|---|
+| Engine pitch | every frame | `engineUpdate(interpSpeeds[leadIdx], racing)` |
+| Countdown beep | `_beepStep !== _lastBeepStep` while `cdActive` | `countdownBeep(3/2/1/0)` |
+| Pothole thud | `hitJustStarted && i === leadIdx` | `potholeHit()` |
+| Finish fanfare | `endFrame === END_DRIVE && !_fanfareFired` | `finishFanfare()` |
 
 ### Phase 7 — Demo Mode Parity — NOT STARTED
 **Goal**: Ensure every Phase 1-6 upgrade works in `DemoRace.jsx` (the new-player funnel).

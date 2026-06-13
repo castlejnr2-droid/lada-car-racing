@@ -18,6 +18,11 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createRng, seedFromHex } from './rng.js';
 import { buildTrack, simulate, TRACK_LENGTH } from './physics.js';
+import {
+  resumeAudio, engineStart, engineStop, engineUpdate,
+  potholeHit, countdownBeep, finishFanfare,
+  isMuted, muteToggle,
+} from './audio.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 // With BASE_SPEED=6 the sim finishes in ~half the ticks compared to BASE_SPEED=3.
@@ -212,6 +217,50 @@ export function runReplay(canvas, hexSeed, {
     _errEl.textContent += (_errEl.textContent ? '\n\n' : '') + '[replay error]\n' + msg;
     _errEl.style.display = 'block';
   }
+
+  // ── Audio init + mute button ──────────────────────────────────────────────
+  // Try to init immediately (succeeds if we are inside the user gesture chain).
+  // The touchstart listener on the canvas catches any case where gesture has
+  // already expired — any first tap will un-suspend the AudioContext.
+  resumeAudio();
+
+  function _onCanvasTouch() { resumeAudio(); }
+  canvas.addEventListener('touchstart', _onCanvasTouch, { passive: true });
+
+  // Mute toggle button — fixed position over the race canvas, easy mobile reach
+  const _muteBtn = document.createElement('button');
+  function _updateMuteBtn() {
+    _muteBtn.textContent = isMuted() ? '\uD83D\uDD07' : '\uD83D\uDD0A'; // 🔇 / 🔊
+    _muteBtn.setAttribute('aria-label', isMuted() ? 'Unmute sound' : 'Mute sound');
+  }
+  _updateMuteBtn();
+  Object.assign(_muteBtn.style, {
+    position:   'fixed',
+    bottom:     '16px',
+    left:       '12px',
+    zIndex:     '300',
+    width:      '40px',
+    height:     '40px',
+    border:     '1px solid rgba(255,255,255,0.18)',
+    borderRadius: '8px',
+    background: 'rgba(8,10,18,0.78)',
+    color:      '#fff',
+    fontSize:   '20px',
+    lineHeight: '1',
+    cursor:     'pointer',
+    display:    'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding:    '0',
+    touchAction: 'manipulation',
+    userSelect: 'none',
+  });
+  _muteBtn.addEventListener('click', () => {
+    resumeAudio();   // ensure context is live on first interaction
+    muteToggle();
+    _updateMuteBtn();
+  });
+  document.body.appendChild(_muteBtn);
 
   // ── Physics simulation ────────────────────────────────────────────────────
   const rng   = createRng(seedFromHex(hexSeed));
@@ -412,6 +461,10 @@ export function runReplay(canvas, hexSeed, {
   let camShakeAge = -1;        // frames since last pothole-hit shake (-1 = idle)
   let camShakeDX  = 0;         // random X offset baked at shake onset, decays away
   let camShakeDY  = 0;         // random Y offset baked at shake onset, decays away
+
+  // Phase 6 audio state
+  let _lastBeepStep  = -1;   // last countdown step that fired a beep (prevents re-fire)
+  let _fanfareFired  = false; // fanfare plays exactly once at end of race
 
   // ── GLB car model loader ──────────────────────────────────────────────────
   const GLB_URL = 'https://cdn.jsdelivr.net/gh/castlejnr2-droid/lada-car-racing@main/frontend/public/car.glb';
@@ -714,6 +767,7 @@ export function runReplay(canvas, hexSeed, {
         camShakeAge = 0;
         camShakeDX  = (Math.random() - 0.5) * 0.18;
         camShakeDY  = Math.random() * 0.10;   // always push up (pothole jolt)
+        potholeHit();
       }
     }
 
@@ -722,6 +776,28 @@ export function runReplay(canvas, hexSeed, {
 
     // HUD progress bar uses corrected display positions so bar rank agrees with visual
     const interpPositions = displayPos;
+
+    // ── Audio (Phase 6) ───────────────────────────────────────────────────────
+    // Engine pitch tracks the camera-followed car's speed.
+    engineUpdate(interpSpeeds[leadIdx], racing);
+
+    // Countdown beeps: fire once on the first frame of each digit (step change).
+    if (cdActive) {
+      const _beepStep = frameCount <= COUNTDOWN_STEP     ? 3
+        : frameCount <= COUNTDOWN_STEP * 2 ? 2
+        : frameCount <= COUNTDOWN_STEP * 3 ? 1
+        : 0;  // GO
+      if (_beepStep !== _lastBeepStep) {
+        _lastBeepStep = _beepStep;
+        countdownBeep(_beepStep);
+      }
+    }
+
+    // Finish fanfare — fires once when celebration orbit begins
+    if (endFrame === END_DRIVE && !_fanfareFired) {
+      _fanfareFired = true;
+      finishFanfare();
+    }
 
     // ── Camera (Phase 4) ──────────────────────────────────────────────────────
     // Chase cam is always computed as the base; orbit blends in on top during
@@ -831,9 +907,12 @@ export function runReplay(canvas, hexSeed, {
     rafId = requestAnimationFrame(loop);
   }
 
-  // Hold loop until GLB is loaded
+  // Hold loop until GLB is loaded, then start engine and RAF loop
   loadCarModel().then(() => {
-    if (!cancelled) rafId = requestAnimationFrame(loop);
+    if (!cancelled) {
+      engineStart();
+      rafId = requestAnimationFrame(loop);
+    }
   });
 
   return () => {
@@ -841,7 +920,10 @@ export function runReplay(canvas, hexSeed, {
     if (rafId) cancelAnimationFrame(rafId);
     canvas.style.imageRendering = '';
     renderer.dispose();
-    try { document.body.removeChild(_errEl); } catch (_) {}
+    engineStop();
+    canvas.removeEventListener('touchstart', _onCanvasTouch);
+    try { document.body.removeChild(_errEl);  } catch (_) {}
+    try { document.body.removeChild(_muteBtn); } catch (_) {}
   };
 }
 
