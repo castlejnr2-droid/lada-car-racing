@@ -60,11 +60,15 @@ button, input, select {
   padding-top: var(--safe-top);
   position: relative;
   isolation: isolate;
-  /* Static fallback shown when WebGL is unavailable */
-  background: url('/lada-bg.jpg') center center / cover no-repeat;
+  /* Static fallback colour shown when WebGL is unavailable or still loading.
+     Matches the dusk fog colour so the canvas fade-in is imperceptible. */
+  background: #1e0c06;
 }
 
-/* Background 3D canvas — sits below the overlay and all content */
+/* Background 3D canvas — sits below the overlay and all content.
+   Starts invisible; menuScene.js sets opacity:1 after the first rendered
+   frame, and the CSS transition fades it in over the static background
+   colour with no flash of old art. */
 .app__bg-canvas {
   position: absolute;
   inset: 0;
@@ -73,6 +77,8 @@ button, input, select {
   height: 100%;
   z-index: 0;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
 }
 
 /* Cinematic gradient overlay — lets the 3D scene show through in the middle
