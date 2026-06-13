@@ -85,8 +85,10 @@ export default function Race() {
         race.player1_username || shortAddr(race.player1),
         race.player2_username || shortAddr(race.player2),
       ],
+      // Derive payout as pot - house_fee, matching ResultScreen.jsx exactly.
+      // winner_payout in the DB was parsed incorrectly before the indexer fix, so derive it here.
       payoutLabel: race.pot
-        ? 'Prize: ' + formatLada(BigInt(race.pot) * 95n / 100n) + ' LADA'
+        ? 'Prize: ' + formatLada(BigInt(race.pot) - BigInt(race.house_fee || 0)) + ' LADA'
         : null,
     });
     return () => replayStopRef.current?.();
