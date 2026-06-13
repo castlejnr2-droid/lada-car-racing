@@ -60,16 +60,18 @@ button, input, select {
   padding-top: var(--safe-top);
   position: relative;
   isolation: isolate;
-  /* Static fallback colour — matches the day-theme fog colour so the canvas
-     fade-in (opacity 0 → 1) is imperceptible. Dusk was too dark; scene now
-     opens on the bright day end of the cycle. */
-  background: #c0ccd8;
+  /* Dark fallback — shown while the canvas is at opacity:0 before the first
+     3D frame. Must be dark so neither cold open nor return-from-demo shows
+     a white/light flash. The canvas fade-in (dark → 3D scene) is smooth
+     regardless of the background colour behind it. */
+  background: #1a1a1a;
 }
 
 /* Background 3D canvas — sits below the overlay and all content.
-   Starts invisible; menuScene.js sets opacity:1 after the first rendered
-   frame, and the CSS transition fades it in over the static background
-   colour with no flash of old art. */
+   Starts invisible (opacity:0); menuScene.js sets opacity:1 after the first
+   rendered frame and the CSS transition fades it in.
+   background:#1a1a1a ensures any pre-render peek at the canvas surface
+   (e.g. WebGL default clear before setClearColor runs) is dark, not white. */
 .app__bg-canvas {
   position: absolute;
   inset: 0;
@@ -78,6 +80,7 @@ button, input, select {
   height: 100%;
   z-index: 0;
   pointer-events: none;
+  background: #1a1a1a;
   opacity: 0;
   transition: opacity 0.4s ease;
 }

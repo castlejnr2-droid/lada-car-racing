@@ -179,7 +179,9 @@ export function startMenuScene(canvas) {
   renderer.setPixelRatio(dpr);
   renderer.setSize(W, H, false);
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.setClearColor(THEME_DAY.fogColor);
+  // Dark clear colour so any frame rendered before scene.background is fully
+  // set (e.g. the implicit clear on context creation) is dark, not white.
+  renderer.setClearColor(0x1a1a1a);
 
   // ── Scene ─────────────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
