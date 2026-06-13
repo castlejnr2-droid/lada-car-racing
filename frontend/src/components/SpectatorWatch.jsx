@@ -12,6 +12,7 @@ import { fetchRace } from '../api/races.js';
 import { runReplay } from '../game/replay.js';
 import { useBackButton, haptic } from '../lib/telegram.js';
 import { formatLada } from '../lib/format.js';
+import { shareRace } from '../lib/share.js';
 
 function shortAddr(a) {
   if (!a) return '???';
@@ -26,9 +27,10 @@ export default function SpectatorWatch() {
   const [canvasEl, setCanvasEl] = useState(null);
   const canvasRef = useCallback((el) => setCanvasEl(el), []);
 
-  const [race, setRace]   = useState(null);
-  const [error, setError] = useState(null);
-  const [done, setDone]   = useState(false);
+  const [race, setRace]       = useState(null);
+  const [error, setError]     = useState(null);
+  const [done, setDone]       = useState(false);
+  const [shareMsg, setShareMsg] = useState(null);
 
   // Back button always returns to spectator list
   useEffect(() => useBackButton(() => navigate('/spectate')), [navigate]);
@@ -84,6 +86,15 @@ export default function SpectatorWatch() {
 
     return () => { stopRef.current?.(); stopRef.current = null; };
   }, [canvasEl, race]);
+
+  async function handleShare() {
+    haptic.tap();
+    const result = await shareRace(raceId);
+    if (result === 'copied') {
+      setShareMsg('Link copied');
+      setTimeout(() => setShareMsg(null), 2000);
+    }
+  }
 
   // ── Error screen ──────────────────────────────────────────────────────────
   if (error) {
@@ -145,6 +156,36 @@ export default function SpectatorWatch() {
         SPECTATING
       </div>
 
+      {/* Share button — visible once race data is loaded */}
+      {race && (
+        <button
+          onClick={handleShare}
+          style={{
+            position: 'absolute', top: 10, right: 10, zIndex: 20,
+            background: 'rgba(30,80,200,0.88)',
+            color: '#fff', border: '1px solid rgba(255,255,255,0.18)',
+            fontFamily: 'monospace', fontWeight: 'bold',
+            fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase',
+            padding: '3px 10px', cursor: 'pointer',
+          }}
+        >
+          📤 Share
+        </button>
+      )}
+
+      {/* "Link copied" toast */}
+      {shareMsg && (
+        <div style={{
+          position: 'absolute', top: 40, right: 10, zIndex: 21,
+          background: 'rgba(0,0,0,0.75)', color: '#fff',
+          fontSize: 12, padding: '4px 10px',
+          fontFamily: 'monospace', letterSpacing: '0.05em',
+          pointerEvents: 'none',
+        }}>
+          {shareMsg}
+        </div>
+      )}
+
       {/* Loading state — race fetch in progress */}
       {!race && !error && (
         <div style={{
@@ -184,12 +225,29 @@ export default function SpectatorWatch() {
             Stake: {formatLada(race.stake)} LADA per player
           </p>
 
-          <button
-            className="btn btn--ghost btn--small"
-            onClick={() => navigate('/spectate')}
-          >
-            Back to watch list
-          </button>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button
+              className="btn btn--ghost btn--small"
+              onClick={handleShare}
+            >
+              📤 Share
+            </button>
+            <button
+              className="btn btn--ghost btn--small"
+              onClick={() => navigate('/spectate')}
+            >
+              Back to watch list
+            </button>
+          </div>
+
+          {shareMsg && (
+            <div style={{
+              marginTop: 10, fontSize: 12,
+              color: 'var(--fg-muted)', letterSpacing: '0.05em',
+            }}>
+              {shareMsg}
+            </div>
+          )}
         </div>
       )}
     </div>

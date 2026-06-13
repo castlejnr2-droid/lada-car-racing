@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { fetchSettledRaces } from '../../api/races.js';
 import { formatLada } from '../../lib/format.js';
 import { haptic } from '../../lib/telegram.js';
+import { shareRace } from '../../lib/share.js';
 
 function shortAddr(a) {
   if (!a) return '???';
@@ -21,6 +22,7 @@ export default function WatchTab() {
   const navigate = useNavigate();
   const [races, setRaces]   = useState(null);  // null = loading
   const [error, setError]   = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +90,30 @@ export default function WatchTab() {
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 2 }}>
                   ▶ Watch
                 </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    haptic.tap();
+                    shareRace(r.id).then((result) => {
+                      if (result === 'copied') {
+                        setCopiedId(r.id);
+                        setTimeout(() => setCopiedId((cur) => cur === r.id ? null : cur), 2000);
+                      }
+                    });
+                  }}
+                  style={{
+                    marginTop: 4,
+                    fontSize: 11,
+                    color: 'var(--fg-muted)',
+                    cursor: 'pointer',
+                    padding: 0,
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'right',
+                  }}
+                >
+                  {copiedId === r.id ? 'Link copied' : '📤 Share'}
+                </button>
               </div>
             </div>
           </div>
