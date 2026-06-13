@@ -332,7 +332,36 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 
 ---
 
-## Leaderboard Upgrade — DONE (commit 7728dfe)
+## Live 3D Menu Background — DONE, device-verified
+
+Ambient looping 3D scene replaces the static home screen background.
+
+**Scene**: Soviet boulevard with 4 Ladas in bright Soviet colours (red, blue, yellow, green) cruising past panelki, birch trees, cobra-head lamp posts, and sagging power lines. Sky slowly cycles from bright sunny day to a brief golden dusk and back over 80 seconds, biased so ~80% of the time is near the cheerful day end.
+
+**Key files**:
+- `frontend/src/game/menuScene.js` — isolated Three.js scene, completely separate from `runReplay`
+- `frontend/src/components/Home.jsx` — mounts/destroys scene on mount/unmount; pause/resume on tab switch
+- `frontend/src/styles/global.css` — canvas opacity fade-in, dark fallback background
+
+**Performance**:
+- 24fps cap (ambient background needs no more)
+- Theme material/light updates throttled to ≤5× per second (every 200ms); 80-second cycle is imperceptible at that granularity
+- Car movement delta-normalised — apparent speed unchanged at 24fps
+- Merged geometry (buildings, lamp hardware, glow discs); InstancedMesh for trees (2 draw calls)
+- RAF stops on `pause()`, `visibilitychange`, and `destroy()` — confirmed no rendering on other tabs or backgrounded app
+
+**Flash fixes — both verified on device**:
+- Cold open: inline `<style>html,body,#root{background:#1a1a1a}` in `index.html` prevents white page flash before CSS bundle loads
+- Canvas mount (cold open + return from demo): `.app` background set to `#1a1a1a` (not the light fog colour); `.app__bg-canvas` gets `background:#1a1a1a`; renderer `setClearColor(0x1a1a1a)` — no white/light frame before first 3D render
+
+**Additional polish**:
+- Demo auto-start countdown extended from 30s to 90s (one full day/dusk cycle)
+- Eruda debug console removed from production
+- Text readability: overlay gradient strengthened at body area (0.50/0.46); `textShadow` on "Connect your wallet" and "Demo starts in Ns" lines
+
+---
+
+## Leaderboard Upgrade — DONE, device-verified (commit 7728dfe)
 
 One continuous all-time leaderboard, no seasons or time windows. Two views toggled in the LEADERS tab:
 
