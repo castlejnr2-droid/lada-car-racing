@@ -6,21 +6,21 @@ import { getLadaBalance } from '../blockchain/jetton.js';
 import PlayTab from './tabs/PlayTab.jsx';
 import StatsTab from './tabs/StatsTab.jsx';
 import LeaderboardTab from './tabs/LeaderboardTab.jsx';
+import WatchTab from './tabs/WatchTab.jsx';
 
 const TABS = [
-  { id: 'play',        label: 'Play',        icon: '🚗' },
-  { id: 'stats',       label: 'Stats',       icon: '📊' },
-  { id: 'leaderboard', label: 'Leaders',     icon: '🏆' },
+  { id: 'play',        label: 'Play',    icon: '🚗' },
+  { id: 'stats',       label: 'Stats',   icon: '📊' },
+  { id: 'leaderboard', label: 'Leaders', icon: '🏆' },
+  { id: 'watch',       label: 'Watch',   icon: '👁' },
 ];
 
-export default function Home() {
-  const [tab, setTab] = useState('play');
-  const [balance, setBalance] = useState(null);  // BigInt nano-LADA or null
+export default function Home({ initialTab = 'play' }) {
+  const [tab, setTab] = useState(initialTab);
+  const [balance, setBalance] = useState(null);
   const address = useTonAddress();
   const [tonConnectUI] = useTonConnectUI();
 
-  // Once a wallet is connected, upsert the player in the backend so the
-  // Telegram → wallet link exists by the time the user hits /stats.
   useEffect(() => {
     if (!address) return;
     const user = tgUser();
@@ -31,7 +31,6 @@ export default function Home() {
     }).catch((e) => console.warn('[players] upsert failed', e));
   }, [address]);
 
-  // Fetch LADA balance whenever wallet changes; refresh every 30 s.
   useEffect(() => {
     if (!address) { setBalance(null); return; }
     let cancelled = false;
@@ -45,7 +44,6 @@ export default function Home() {
   }, [address]);
 
   useEffect(() => {
-    // Home screen has no BackButton (this is the root)
     tg.BackButton.hide();
   }, []);
 
@@ -86,6 +84,7 @@ export default function Home() {
         {tab === 'play'        && <PlayTab balance={balance} />}
         {tab === 'stats'       && <StatsTab />}
         {tab === 'leaderboard' && <LeaderboardTab />}
+        {tab === 'watch'       && <WatchTab />}
       </main>
 
       <nav className="tabbar">

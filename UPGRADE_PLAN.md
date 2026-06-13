@@ -299,14 +299,33 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 
 ---
 
-## Follow-up Roadmap (post Phase 7)
+## Spectator Mode — DONE
 
-From the original brief, future features worth tracking:
+**Routes**: `/spectate` (list) and `/spectate/:raceId` (watch). Deep link via Telegram start_param `r_<raceId>` → navigates directly to watch view.
 
-1. **Spectator mode** — watch a race you're not in; same `runReplay` with read-only UI
-2. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
-3. **Leaderboard seasons** — backend already has leaderboard; add season resets and season prizes
-4. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
+**Architecture**: `SpectatorWatch` calls `runReplay` identically to `Race.jsx` and `DemoRace.jsx`. No `payoutLabel` passed → results banner shows winner name only, no payout figures. `SPECTATING` badge (blue, top-left) distinguishes from `DEMO` (red) and own race (no badge). `runReplay` inherits all Phases 1-6 upgrades automatically.
+
+**Entry point**: 4th tab "👁 Watch" in `Home.jsx` (via `/spectate` route setting `initialTab="watch"`). `Home` accepts `initialTab` prop so the same component serves both `/` and `/spectate`.
+
+**Validation**: `SpectatorWatch` fetches via `fetchRace(id)`. Validates `state === 'settled'` and `combined_seed` present. Non-settled, refunded, not-found, and network errors each show a specific friendly message (no crashes, no blank screen).
+
+**Backend change (read-only)**: Added `LEFT JOIN players p1/p2` to the `GET /api/races` list query to include `player1_username` / `player2_username`. Qualified all column references with `r.` to avoid `created_at` ambiguity. No write logic or schema touched.
+
+**Files added/changed**:
+- `backend/src/routes/races.js` — username join on list query only
+- `frontend/src/api/races.js` — `fetchSettledRaces(limit)` added
+- `frontend/src/components/tabs/WatchTab.jsx` — NEW: settled-race list, auto-refreshes every 5 s
+- `frontend/src/components/SpectatorWatch.jsx` — NEW: full-screen spectator replay
+- `frontend/src/App.jsx` — two new routes + `StartParamRedirect` for deep links
+- `frontend/src/components/Home.jsx` — `initialTab` prop + Watch tab
+
+---
+
+## Follow-up Roadmap
+
+1. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
+2. **Leaderboard seasons** — backend already has leaderboard; add season resets and season prizes
+3. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
 
 ---
 
