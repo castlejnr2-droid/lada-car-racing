@@ -23,7 +23,7 @@ function formatNetProfit(amount) {
   const whole   = abs / NANO;
   const frac    = abs % NANO;
   const fracStr = frac.toString().padStart(9, '0').slice(0, 2);
-  const text    = (isNeg ? '\u2212' : '+') + whole + '.' + fracStr + ' LADA';
+  const text    = (isNeg ? '-' : '+') + whole + '.' + fracStr + ' LADA';
   const color   = isNeg ? '#ff5555' : '#44cc88';
   return { text, color };
 }
