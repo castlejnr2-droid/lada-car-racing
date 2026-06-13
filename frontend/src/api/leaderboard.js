@@ -1,4 +1,4 @@
 import { api } from './client.js';
 
-export const fetchLeaderboard = (period = 'week') =>
-  api(`/api/leaderboard?period=${period}&limit=20`);
+export const fetchLeaderboard = (sort = 'wins') =>
+  api(`/api/leaderboard?sort=${sort}&limit=50`);

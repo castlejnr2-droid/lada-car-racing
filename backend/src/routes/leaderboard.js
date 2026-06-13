@@ -3,23 +3,24 @@ import { query } from '../db/pool.js';
 
 const router = Router();
 
-// ───── GET /api/leaderboard ─ top players by winnings ────────────────────
+// ───── GET /api/leaderboard ─ all-time rankings ───────────────────────────
 //   query params:
-//     period = all | day | week | month  (default: all)
-//     limit  = 1..200                    (default: 100)
+//     sort  = wins | profit   (default: wins)
+//     limit = 1..200          (default: 100)
+//
+//   Net profit per player = SUM(winner_payout - stake) over won races
+//                         - SUM(stake) over lost races
+//   i.e. what they actually walked away up or down across all settled races.
 router.get('/', async (req, res, next) => {
   try {
-    const period = (req.query.period || 'all').toString();
+    const sort  = req.query.sort === 'profit' ? 'profit' : 'wins';
     const limit = Math.min(parseInt(req.query.limit || '100', 10), 200);
 
-    const intervals = {
-      day:   `1 day`,
-      week:  `7 days`,
-      month: `30 days`,
-    };
-    const where = intervals[period]
-      ? `r.state = 'settled' AND r.finished_at > now() - interval '${intervals[period]}'`
-      : `r.state = 'settled'`;
+    // Dynamic ORDER BY — parameterised values can't be used for column names,
+    // but sort is already validated to exactly one of two literals above.
+    const orderBy = sort === 'profit'
+      ? `"netProfit"::numeric DESC, wins DESC`
+      : `wins DESC, "netProfit"::numeric DESC`;
 
     const { rows } = await query(
       `SELECT p.address,
@@ -30,17 +31,22 @@ router.get('/', async (req, res, next) => {
               COALESCE(SUM(r.winner_payout) FILTER (WHERE r.winner = p.address), 0)::text
                 AS "totalWon",
               COALESCE(SUM(r.stake) FILTER (WHERE r.loser = p.address), 0)::text
-                AS "totalLost"
+                AS "totalLost",
+              (
+                COALESCE(SUM(r.winner_payout) FILTER (WHERE r.winner = p.address), 0)
+                - COALESCE(SUM(r.stake)        FILTER (WHERE r.winner = p.address), 0)
+                - COALESCE(SUM(r.stake)        FILTER (WHERE r.loser  = p.address), 0)
+              )::text AS "netProfit"
          FROM players p
          JOIN races r ON (r.player1 = p.address OR r.player2 = p.address)
-                      AND ${where}
+                      AND r.state = 'settled'
         GROUP BY p.address, p.username, p.avatar_url
-        HAVING COUNT(r.id) FILTER (WHERE r.winner = p.address) > 0
-        ORDER BY wins DESC, "totalWon"::numeric DESC
+        HAVING COUNT(r.id) > 0
+        ORDER BY ${orderBy}
         LIMIT $1`,
       [limit],
     );
-    res.json({ period, rows });
+    res.json({ sort, rows });
   } catch (e) { next(e); }
 });
 
