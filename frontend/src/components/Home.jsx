@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTonAddress, useTonConnectUI } from '@tonconnect/ui-react';
 import { tg, haptic, tgUser } from '../lib/telegram.js';
 import { upsertPlayer } from '../api/players.js';
@@ -20,6 +20,13 @@ export default function Home({ initialTab = 'play' }) {
   const [balance, setBalance] = useState(null);
   const address = useTonAddress();
   const [tonConnectUI] = useTonConnectUI();
+
+  // ── Background 3D scene refs ─────────────────────────────────────────────
+  const menuCanvasRef = useRef(null);
+  const menuSceneRef  = useRef(null);
+  // tabRef lets the async import callback read the current tab without stale closure
+  const tabRef        = useRef(tab);
+  tabRef.current      = tab;
 
   useEffect(() => {
     if (!address) return;
@@ -47,8 +54,43 @@ export default function Home({ initialTab = 'play' }) {
     tg.BackButton.hide();
   }, []);
 
+  // Start the ambient background scene once on mount; destroy on unmount.
+  // Dynamic import keeps menuScene.js out of the critical-path bundle.
+  useEffect(() => {
+    let scene = null;
+    import('../game/menuScene.js')
+      .then(({ startMenuScene }) => {
+        if (!menuCanvasRef.current) return;  // component unmounted before load finished
+        try {
+          scene = startMenuScene(menuCanvasRef.current);
+          menuSceneRef.current = scene;
+          // Apply current tab state — may have changed while the import was in-flight
+          if (tabRef.current !== 'play') scene.pause();
+        } catch (e) {
+          console.warn('[Home] menuScene init error:', e);
+        }
+      })
+      .catch((e) => console.warn('[Home] menuScene import failed:', e));
+    return () => {
+      scene?.destroy();
+      menuSceneRef.current = null;
+    };
+  }, []); // mount/unmount only
+
+  // Pause rendering when switching away from the play tab; resume on return.
+  useEffect(() => {
+    const s = menuSceneRef.current;
+    if (!s) return;
+    if (tab === 'play') s.resume();
+    else s.pause();
+  }, [tab]);
+
   return (
     <div className="app">
+      {/* Background 3D scene — rendered behind overlay and all UI content.
+          Falls back to the static jpg in global.css if WebGL is unavailable. */}
+      <canvas ref={menuCanvasRef} className="app__bg-canvas" />
+
       <header className="app__header">
         <span><span className="logo">LADA</span> <span className="star">★</span> RACING</span>
         <div style={{ textAlign: 'right', lineHeight: 1.35 }}>
