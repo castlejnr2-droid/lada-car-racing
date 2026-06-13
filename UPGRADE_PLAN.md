@@ -299,7 +299,9 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 
 ---
 
-## Spectator Mode — DONE
+## Spectator Mode — DONE, device-verified (commit 319f646)
+
+**Verified working**: list view, watch view, no-payout rule (results banner shows winner name only, no LADA figure), error handling for invalid/non-settled/refunded/not-found race IDs, deep link *receiving* via Telegram start_param `r_<raceId>`.
 
 **Routes**: `/spectate` (list) and `/spectate/:raceId` (watch). Deep link via Telegram start_param `r_<raceId>` → navigates directly to watch view.
 
@@ -319,13 +321,16 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 - `frontend/src/App.jsx` — two new routes + `StartParamRedirect` for deep links
 - `frontend/src/components/Home.jsx` — `initialTab` prop + Watch tab
 
+**Remaining gap — NOT YET BUILT**: There is no UI share button to generate deep links. A user watching a race has no way to share it to another person. Next task: add a Share button to `SpectatorWatch` (and optionally to the watch-list cards) that constructs `t.me/<bot>/<app>?startapp=r_<raceId>` and calls `WebApp.openTelegramLink` or copies to clipboard. The bot/app name must be read from an env var so it is not hardcoded.
+
 ---
 
 ## Follow-up Roadmap
 
-1. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
+1. **Share button for spectator deep links** — NEXT: share button in SpectatorWatch, generates `r_<raceId>` Telegram link
 2. **Leaderboard seasons** — backend already has leaderboard; add season resets and season prizes
-3. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
+3. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
+4. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
 
 ---
 
