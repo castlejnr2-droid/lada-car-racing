@@ -9,7 +9,7 @@
  * day end so the first impression is always welcoming and sunny.
  *
  * Performance guarantees:
- *   - 30fps cap (FRAME_MS gate in RAF callback)
+ *   - 24fps cap (FRAME_MS gate in RAF callback)
  *   - RAF loop stops on pause(), document.hidden, and destroy()
  *   - Double-start guarded: startLoop() checks rafId before scheduling
  *   - Theme cycle: only lerps existing uniform/colour values — no scene rebuild
@@ -102,8 +102,21 @@ const CAM_POS    = new THREE.Vector3(7.5, 4.2, 28);
 const CAM_LOOKAT = new THREE.Vector3(0, 1.5, -35);
 
 // ── Framerate cap ─────────────────────────────────────────────────────────────
-const TARGET_FPS = 30;
-const FRAME_MS   = 1000 / TARGET_FPS;
+const TARGET_FPS = 24;
+const FRAME_MS   = 1000 / TARGET_FPS;  // ≈ 41.67 ms
+
+// ── Theme update throttle ─────────────────────────────────────────────────────
+// Sky, fog, light, and material colours update at most 5× per second.
+// The 80-second day/dusk cycle changes imperceptibly in 200 ms, so this
+// is visually identical while cutting per-frame GPU state-change work by ~80%.
+const THEME_TICK_MS = 200;
+
+// ── Car speed normalisation ───────────────────────────────────────────────────
+// Speeds in CAR_CONFIGS are expressed in "world units per frame at 30fps".
+// Multiplying by (delta / SPEED_FRAME_MS) gives the correct delta-time
+// displacement regardless of actual framerate, so dropping to 24fps does
+// not visibly slow the cars.
+const SPEED_FRAME_MS = 1000 / 30;
 
 const GLB_URL = 'https://cdn.jsdelivr.net/gh/castlejnr2-droid/lada-car-racing@main/frontend/public/car.glb';
 
@@ -131,12 +144,13 @@ function lerpN(a, b, t) { return a + (b - a) * t; }
 
 // ── Public entry point ────────────────────────────────────────────────────────
 export function startMenuScene(canvas) {
-  let rafId       = null;
-  let paused      = false;
-  let destroyed   = false;
-  let lastFrameMs = 0;
-  let firstFrame  = true;
-  let cycleAngle  = 0;  // 0 → duskT=0 → pure day on first open
+  let rafId        = null;
+  let paused       = false;
+  let destroyed    = false;
+  let lastFrameMs  = 0;
+  let lastThemeMs  = 0;   // throttle: last time theme colours were pushed to GPU
+  let firstFrame   = true;
+  let cycleAngle   = 0;   // 0 → duskT=0 → pure day on first open
 
   // Per-car state — each car advances independently
   const cars = CAR_CONFIGS.map((cfg, i) => ({
@@ -214,73 +228,91 @@ export function startMenuScene(canvas) {
   // ── Render loop ───────────────────────────────────────────────────────────
   // Contract:
   //   • Only one RAF chain runs at a time — rafId guard in startLoop
-  //   • rafId is cleared at tick entry before re-arm (prevents double-start race)
+  //   • rafId cleared at tick entry before re-arm (prevents double-start race)
   //   • Loop exits immediately when paused or destroyed
   //   • visibilitychange listener stops/starts loop with app focus
-  //   • Theme cycle: pure arithmetic on pre-allocated objects — no allocation
+  //   • No allocations inside tick — all temp objects are module-level
+  //
+  // Work split to reduce GPU/CPU heat:
+  //   EVERY rendered frame (24fps): car positions, car sway, cloud drift, draw
+  //   THROTTLED (≤5× per second):   sky uniforms, fog, lights, 10 material colours
   function tick(now) {
-    rafId = null;                       // clear before re-arm
+    rafId = null;                        // clear before re-arm
     if (destroyed || paused) return;
     rafId = requestAnimationFrame(tick);
 
-    // 30fps cap
+    // 24fps cap
     const delta = now - lastFrameMs;
     if (delta < FRAME_MS) return;
     lastFrameMs = now - (delta % FRAME_MS);
 
-    // ── Day/dusk theme cycle ────────────────────────────────────────────────
+    // Cycle angle always advances accurately with real elapsed time
     cycleAngle += CYCLE_STEP * delta;
     if (cycleAngle > 2 * Math.PI) cycleAngle -= 2 * Math.PI;
 
-    const rawT  = (1 - Math.cos(cycleAngle)) / 2;  // 0 → 1 → 0 per cycle
-    const t     = rawT * rawT * rawT;               // cubic bias: ~80% time near day
+    // ── Throttled theme update (≤5× per second) ────────────────────────────
+    // Sky, fog, lights, and material colours change slowly over an 80-second
+    // cycle. Updating them every 200 ms is visually identical to every frame
+    // but cuts GPU state-change calls by ~80%.
+    if (now - lastThemeMs >= THEME_TICK_MS) {
+      lastThemeMs = now;
 
-    // Sky gradient uniforms (Vector3.set — in-place, no alloc)
-    const DH = THEME_DAY.skyHorizon,  KH = THEME_DUSK.skyHorizon;
-    const DZ = THEME_DAY.skyZenith,   KZ = THEME_DUSK.skyZenith;
-    skyMat.uniforms.uHorizon.value.set(
-      lerpN(DH[0], KH[0], t), lerpN(DH[1], KH[1], t), lerpN(DH[2], KH[2], t),
-    );
-    skyMat.uniforms.uZenith.value.set(
-      lerpN(DZ[0], KZ[0], t), lerpN(DZ[1], KZ[1], t), lerpN(DZ[2], KZ[2], t),
-    );
+      const rawT = (1 - Math.cos(cycleAngle)) / 2;  // 0 → 1 → 0 per cycle
+      const t    = rawT * rawT * rawT;               // cubic bias: ~80% time near day
 
-    // Fog + background (keep in sync)
-    setLerpC(scene.fog.color, THEME_DAY.fogColor, THEME_DUSK.fogColor, t);
-    scene.background.copy(scene.fog.color);
-    scene.fog.near = lerpN(THEME_DAY.fogNear, THEME_DUSK.fogNear, t);
-    scene.fog.far  = lerpN(THEME_DAY.fogFar,  THEME_DUSK.fogFar,  t);
+      // Sky gradient shader uniforms (Vector3.set — in-place, no alloc)
+      const DH = THEME_DAY.skyHorizon, KH = THEME_DUSK.skyHorizon;
+      const DZ = THEME_DAY.skyZenith,  KZ = THEME_DUSK.skyZenith;
+      skyMat.uniforms.uHorizon.value.set(
+        lerpN(DH[0], KH[0], t), lerpN(DH[1], KH[1], t), lerpN(DH[2], KH[2], t),
+      );
+      skyMat.uniforms.uZenith.value.set(
+        lerpN(DZ[0], KZ[0], t), lerpN(DZ[1], KZ[1], t), lerpN(DZ[2], KZ[2], t),
+      );
 
-    // Lighting
-    setLerpC(ambientLight.color, THEME_DAY.ambientColor, THEME_DUSK.ambientColor, t);
-    ambientLight.intensity = lerpN(THEME_DAY.ambientIntensity, THEME_DUSK.ambientIntensity, t);
-    setLerpC(sunLight.color, THEME_DAY.sunColor, THEME_DUSK.sunColor, t);
-    sunLight.intensity = lerpN(THEME_DAY.sunIntensity, THEME_DUSK.sunIntensity, t);
+      // Fog + background
+      setLerpC(scene.fog.color, THEME_DAY.fogColor, THEME_DUSK.fogColor, t);
+      scene.background.copy(scene.fog.color);
+      scene.fog.near = lerpN(THEME_DAY.fogNear, THEME_DUSK.fogNear, t);
+      scene.fog.far  = lerpN(THEME_DAY.fogFar,  THEME_DUSK.fogFar,  t);
 
-    // Ground and vegetation
-    setLerpC(grassMat.color, THEME_DAY.groundColor,   THEME_DUSK.groundColor,   t);
-    setLerpC(roadMat.color,  THEME_DAY.roadColor,     THEME_DUSK.roadColor,     t);
-    setLerpC(leafMat.color,  THEME_DAY.treeLeafColor,  THEME_DUSK.treeLeafColor,  t);
-    setLerpC(trunkMat.color, THEME_DAY.treeTrunkColor, THEME_DUSK.treeTrunkColor, t);
+      // Lighting
+      setLerpC(ambientLight.color, THEME_DAY.ambientColor, THEME_DUSK.ambientColor, t);
+      ambientLight.intensity = lerpN(THEME_DAY.ambientIntensity, THEME_DUSK.ambientIntensity, t);
+      setLerpC(sunLight.color, THEME_DAY.sunColor, THEME_DUSK.sunColor, t);
+      sunLight.intensity = lerpN(THEME_DAY.sunIntensity, THEME_DUSK.sunIntensity, t);
 
-    // Buildings (3 colour variants)
-    for (let i = 0; i < 3; i++) {
-      setLerpC(buildingMats[i].color, THEME_DAY.buildingColors[i], THEME_DUSK.buildingColors[i], t);
+      // Ground and vegetation
+      setLerpC(grassMat.color, THEME_DAY.groundColor,    THEME_DUSK.groundColor,    t);
+      setLerpC(roadMat.color,  THEME_DAY.roadColor,      THEME_DUSK.roadColor,      t);
+      setLerpC(leafMat.color,  THEME_DAY.treeLeafColor,  THEME_DUSK.treeLeafColor,  t);
+      setLerpC(trunkMat.color, THEME_DAY.treeTrunkColor, THEME_DUSK.treeTrunkColor, t);
+
+      // Buildings (3 colour variants)
+      for (let i = 0; i < 3; i++) {
+        setLerpC(buildingMats[i].color, THEME_DAY.buildingColors[i], THEME_DUSK.buildingColors[i], t);
+      }
+
+      // Cloud colour and opacity
+      setLerpC(cloudMat.color, THEME_DAY.cloudColor, THEME_DUSK.cloudColor, t);
+      cloudMat.opacity = lerpN(THEME_DAY.cloudOpacity, THEME_DUSK.cloudOpacity, t);
     }
 
-    // Clouds
-    setLerpC(cloudMat.color, THEME_DAY.cloudColor, THEME_DUSK.cloudColor, t);
-    cloudMat.opacity = lerpN(THEME_DAY.cloudOpacity, THEME_DUSK.cloudOpacity, t);
-    if (cloudMesh) cloudMesh.position.x += 0.018;  // gentle westward drift
+    // ── Per-frame: cloud drift ─────────────────────────────────────────────
+    // Delta-normalised so drift speed is unchanged regardless of framerate.
+    if (cloudMesh) cloudMesh.position.x += 0.54 * (delta / 1000);  // 0.54 u/s
 
-    // ── Car fleet ──────────────────────────────────────────────────────────
+    // ── Per-frame: car positions and sway ──────────────────────────────────
+    // Delta-normalised movement keeps apparent car speed identical at 24fps.
+    // (CAR_CONFIGS speeds are in u/frame-at-30fps; * delta/SPEED_FRAME_MS
+    //  converts to the correct displacement for the actual elapsed delta.)
+    const moveScale = delta / SPEED_FRAME_MS;
     for (let i = 0; i < cars.length; i++) {
       const car = cars[i];
-      car.zPos -= car.cfg.speed;
+      car.zPos -= car.cfg.speed * moveScale;
       if (car.zPos < LOOP_END) car.zPos = LOOP_START;
       car.group.position.z = car.zPos;
-      car.swayFrame++;
-      // Each car sways at a slightly different phase and amplitude
+      car.swayFrame += moveScale;  // float accumulator — keeps sway rate at 30fps equiv
       car.group.rotation.z = Math.sin(car.swayFrame * 0.042 + i * 1.3) * 0.011;
     }
 
