@@ -17,10 +17,16 @@ const STORAGE_KEY = 'lada_muted';
 let _ctx    = null;   // AudioContext
 let _master = null;   // GainNode — master volume (0 when muted, 1 when live)
 
-// Engine oscillator — one per active race, recreated on engineStart()
-let _engineOsc    = null;
-let _engineGain   = null;
-let _engineFilter = null;
+// Engine — all nodes recreated on engineStart(), torn down on engineStop()
+let _engOsc1      = null;   // sawtooth,  0¢  — base tone
+let _engOsc2      = null;   // sawtooth, +28¢ — slightly sharp (creates beating)
+let _engOsc3      = null;   // square,   -18¢ — slightly flat + buzzier timbre
+let _engFilter    = null;   // lowpass, cutoff sweeps up with speed
+let _engAmGain    = null;   // amplitude modulation target (LFO modulates its .gain)
+let _engLfoOsc    = null;   // LFO sine — drives putt-putt pulse
+let _engLfoDepth  = null;   // GainNode scaling LFO amplitude (depth of pulse)
+let _engGain      = null;   // master engine gain — fades in/out at race start/end
+let _engNoiseNode = null;   // looping white-noise buffer for combustion texture
 
 // Mute state is readable before AudioContext exists (for button initial render)
 let _muted = (() => {
@@ -68,53 +74,157 @@ export function resumeAudio() {
 }
 
 // ── Engine sound ───────────────────────────────────────────────────────────────
-// Continuous sawtooth oscillator, low-pass filtered to read as engine rumble.
-// Pitch maps speed → frequency; gain ramps to zero during countdown and end.
+//
+// Signal chain:
+//   osc1(saw, 0¢)  ─┐
+//   osc2(saw,+28¢) ─┤→ sumGain → lpFilter → amGain → engGain → master
+//   osc3(sqr,-18¢) ─┘     ↑cutoff/Q sweep       ↑
+//                    lfoOsc(sine) → lfoDepth → amGain.gain (AudioParam)
+//   noiseNode(loop) → bpFilter(200 Hz) → noiseGain(0.030) → engGain → master
+//
+// Three detuned oscillators produce a beating/rough idle rather than a clean tone.
+// The LFO amplitude-modulates the signal at 9 Hz idle rising to ~22 Hz at speed,
+// creating the putt-putt pulse that tightens into a warble under load.
+// The bandpass-filtered noise adds combustion texture underneath.
+// Filter cutoff sweeps from 400 Hz (idle, muffled) to ~1 250 Hz (full, airy).
 
 export function engineStart() {
   if (!_ctx) return;
   engineStop();
 
-  _engineOsc    = _ctx.createOscillator();
-  _engineFilter = _ctx.createBiquadFilter();
-  _engineGain   = _ctx.createGain();
+  // ── Three oscillators ──────────────────────────────────────────────────────
+  _engOsc1 = _ctx.createOscillator();
+  _engOsc2 = _ctx.createOscillator();
+  _engOsc3 = _ctx.createOscillator();
 
-  _engineFilter.type            = 'lowpass';
-  _engineFilter.frequency.value = 480;
-  _engineFilter.Q.value         = 1.4;
+  _engOsc1.type = 'sawtooth';
+  _engOsc2.type = 'sawtooth';
+  _engOsc3.type = 'square';       // square adds extra high-harmonic buzz
 
-  _engineOsc.type            = 'sawtooth';
-  _engineOsc.frequency.value = 80;
+  _engOsc1.frequency.value = 80;
+  _engOsc2.frequency.value = 80;
+  _engOsc3.frequency.value = 80;
 
-  _engineGain.gain.value = 0;   // start silent; engineUpdate ramps in
+  // Fixed detune in cents — osc2/3 track osc1's frequency, offset permanently
+  _engOsc2.detune.value = 28;     // +28¢: beating rate ≈ 1.6 Hz at idle
+  _engOsc3.detune.value = -18;    // -18¢: beating rate ≈ 1.0 Hz at idle
 
-  _engineOsc.connect(_engineFilter);
-  _engineFilter.connect(_engineGain);
-  _engineGain.connect(_master);
-  _engineOsc.start();
+  const sumGain = _ctx.createGain();
+  sumGain.gain.value = 0.34;      // normalise 3 sources
+
+  // ── Lowpass filter (cutoff sweeps with speed) ──────────────────────────────
+  _engFilter = _ctx.createBiquadFilter();
+  _engFilter.type            = 'lowpass';
+  _engFilter.frequency.value = 400;    // idle: muffled carburettor thrum
+  _engFilter.Q.value         = 1.6;
+
+  // ── Amplitude modulation — LFO drives putt-putt pulse ─────────────────────
+  // amGain.gain = DC offset (0.65) + LFO contribution (±lfoDepth)
+  // At idle: gain swings ≈ 0.30–1.00 (heavy pulse)
+  // At speed: gain swings ≈ 0.53–0.77 (light warble)
+  _engAmGain = _ctx.createGain();
+  _engAmGain.gain.value = 0.65;   // DC offset — never changed after init
+
+  _engLfoOsc = _ctx.createOscillator();
+  _engLfoOsc.type            = 'sine';
+  _engLfoOsc.frequency.value = 9;   // Hz at idle
+
+  _engLfoDepth = _ctx.createGain();
+  _engLfoDepth.gain.value = 0.35;   // LFO amplitude at idle
+
+  // ── Combustion noise ───────────────────────────────────────────────────────
+  // 0.5 s looping white-noise buffer through a narrow bandpass, mixed low
+  const noiseBuf  = _ctx.createBuffer(1, Math.ceil(_ctx.sampleRate * 0.5), _ctx.sampleRate);
+  const noiseData = noiseBuf.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) noiseData[i] = Math.random() * 2 - 1;
+
+  _engNoiseNode        = _ctx.createBufferSource();
+  _engNoiseNode.buffer = noiseBuf;
+  _engNoiseNode.loop   = true;
+
+  const noiseBpf          = _ctx.createBiquadFilter();
+  noiseBpf.type           = 'bandpass';
+  noiseBpf.frequency.value = 210;
+  noiseBpf.Q.value         = 0.6;
+
+  const noiseGain       = _ctx.createGain();
+  noiseGain.gain.value  = 0.030;
+
+  // ── Master engine gain (fade in/out per race) ──────────────────────────────
+  _engGain = _ctx.createGain();
+  _engGain.gain.value = 0;   // starts silent; engineUpdate ramps in
+
+  // ── Wire the graph ─────────────────────────────────────────────────────────
+  _engOsc1.connect(sumGain);
+  _engOsc2.connect(sumGain);
+  _engOsc3.connect(sumGain);
+  sumGain.connect(_engFilter);
+  _engFilter.connect(_engAmGain);
+
+  // LFO → lfoDepth → amGain.gain AudioParam (adds to the DC offset of 0.65)
+  _engLfoOsc.connect(_engLfoDepth);
+  _engLfoDepth.connect(_engAmGain.gain);
+
+  _engAmGain.connect(_engGain);
+
+  _engNoiseNode.connect(noiseBpf);
+  noiseBpf.connect(noiseGain);
+  noiseGain.connect(_engGain);
+
+  _engGain.connect(_master);
+
+  // ── Start all sources ──────────────────────────────────────────────────────
+  _engOsc1.start();
+  _engOsc2.start();
+  _engOsc3.start();
+  _engLfoOsc.start();
+  _engNoiseNode.start();
 }
 
 /**
- * Call every render frame. speed = interpolated sim speed of followed car.
- * racing = true only while the race is live (not during countdown or end).
+ * Call every render frame.
+ * speed  = interpolated sim speed of camera-followed car (0 … ~BASE_SPEED)
+ * racing = true only while the race is live (not countdown, not end sequence)
  */
 export function engineUpdate(speed, racing) {
-  if (!_ctx || !_engineOsc) return;
-  const now         = _ctx.currentTime;
-  const targetFreq  = 80 + speed * 16;          // 80 Hz idle → ~180 Hz full speed
-  const targetGain  = racing && speed > 0.5 ? 0.07 : 0;
-  const gainTau     = racing ? 0.10 : 0.30;     // slow fade-out at end
-  _engineOsc.frequency.setTargetAtTime(targetFreq, now, 0.05);
-  _engineGain.gain.setTargetAtTime(targetGain, now, gainTau);
+  if (!_ctx || !_engOsc1) return;
+  const now = _ctx.currentTime;
+
+  // Base frequency: 80 Hz idle (Lada at ~700 RPM) → ~180 Hz at full chat
+  const baseFreq = 80 + speed * 16;
+
+  // LFO rate: 9 Hz putt-putt at idle → ~22 Hz warble at speed
+  const lfoFreq  = 9 + speed * 2.2;
+
+  // LFO depth: heavy pulse at idle, tightens at speed
+  const lfoDepth = Math.max(0.12, 0.35 - speed * 0.038);
+
+  // Filter cutoff: muffled thrum at idle → airy carburettor scream at speed
+  const cutoff   = 400 + speed * 142;
+
+  // Overall gain: ramp in when racing, slow fade-out at end
+  const targetGain = racing && speed > 0.5 ? 0.09 : 0;
+  const gainTau    = racing ? 0.10 : 0.30;
+
+  // All three oscillators share the same base frequency; cents offsets are fixed
+  _engOsc1.frequency.setTargetAtTime(baseFreq, now, 0.05);
+  _engOsc2.frequency.setTargetAtTime(baseFreq, now, 0.05);
+  _engOsc3.frequency.setTargetAtTime(baseFreq, now, 0.05);
+
+  _engLfoOsc.frequency.setTargetAtTime(lfoFreq,  now, 0.15);
+  _engLfoDepth.gain.setTargetAtTime(lfoDepth,    now, 0.15);
+  _engFilter.frequency.setTargetAtTime(cutoff,   now, 0.10);
+  _engGain.gain.setTargetAtTime(targetGain,      now, gainTau);
 }
 
 export function engineStop() {
-  if (_engineOsc) {
-    try { _engineOsc.stop(); } catch (_) {}
-    _engineOsc    = null;
-    _engineGain   = null;
-    _engineFilter = null;
+  for (const node of [_engOsc1, _engOsc2, _engOsc3, _engLfoOsc, _engNoiseNode]) {
+    if (node) try { node.stop(); } catch (_) {}
   }
+  _engOsc1 = _engOsc2 = _engOsc3 = null;
+  _engLfoOsc = _engLfoDepth = null;
+  _engAmGain = _engFilter = null;
+  _engGain = _engNoiseNode = null;
 }
 
 // ── Pothole hit (thud) ─────────────────────────────────────────────────────────
