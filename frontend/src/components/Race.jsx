@@ -85,6 +85,9 @@ export default function Race() {
         race.player1_username || shortAddr(race.player1),
         race.player2_username || shortAddr(race.player2),
       ],
+      payoutLabel: race.pot
+        ? 'Prize: ' + formatLada(BigInt(race.pot) * 95n / 100n) + ' LADA'
+        : null,
     });
     return () => replayStopRef.current?.();
   }, [race?.state, race?.combined_seed, canvasEl]);

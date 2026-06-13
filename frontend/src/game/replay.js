@@ -133,7 +133,8 @@ const THEMES = [THEME_DAY, THEME_DUSK, THEME_SNOW];
 
 // ─── Public entry ──────────────────────────────────────────────────────────────
 export function runReplay(canvas, hexSeed, {
-  onComplete, onTick, getViewMode, playerNames = []
+  onComplete, onTick, getViewMode, playerNames = [],
+  payoutLabel = null,   // optional formatted string shown in results banner e.g. "190 LADA"
 } = {}) {
   // Measure canvas CSS size (set by flex layout)
   const dpr  = Math.min(window.devicePixelRatio || 1, 2);
@@ -651,9 +652,11 @@ export function runReplay(canvas, hexSeed, {
     }
 
     // Update car world positions and presentation animations
+    const interpSpeeds = new Array(N);
     for (let i = 0; i < N; i++) {
       const interpPos   = displayPos[i];   // corrected display position (see above)
       const interpSpeed = curr.speeds[i]    + (next.speeds[i]    - curr.speeds[i])    * alpha;
+      interpSpeeds[i]   = interpSpeed;
       const hit         = curr.hits[i];
       const anim        = carAnims[i];
 
@@ -792,11 +795,12 @@ export function runReplay(canvas, hexSeed, {
     // Draw 2D HUD onto the overlay canvas
     drawHud(
       hud.ctx, W, H, N,
-      interpPositions, playerNames,
-      carMeshes, camera,
+      interpPositions, interpSpeeds, leadIdx,
+      playerNames, carMeshes, camera,
       cdActive ? frameCount : -1,
       celebFrame,
       sim.winner,
+      payoutLabel,
     );
     hud.tex.needsUpdate = true;
 
@@ -1414,82 +1418,214 @@ function makeHudPlane(W, H, hudScene) {
 }
 
 // ─── HUD drawing ──────────────────────────────────────────────────────────────
-function drawHud(ctx, W, H, N, positions, playerNames, carMeshes, camera, cdFrame, celebFrame, winnerIdx) {
+// speeds[i]    = interpolated sim speed for car i this frame
+// leadIdx      = index of camera-followed car (used for speed readout)
+// payoutLabel  = optional formatted payout string e.g. "190 LADA" (null in demo)
+function drawHud(ctx, W, H, N, positions, speeds, leadIdx, playerNames, carMeshes, camera, cdFrame, celebFrame, winnerIdx, payoutLabel) {
   ctx.clearRect(0, 0, W, H);
 
-  // ── Progress bar (top of screen) ──────────────────────────────────────────
-  const barH = 5;
-  const barY = 3;   // canvas Y=0 is screen-top (flipY + ortho cancel out)
-  ctx.fillStyle = 'rgba(20,22,28,0.7)';
-  ctx.fillRect(0, barY - 1, W, barH + 2);
-  for (let i = 0; i < N; i++) {
-    const pct = Math.min(1, positions[i] / TRACK_LENGTH);
-    ctx.fillStyle = HUD_COLORS[i % HUD_COLORS.length];
-    ctx.fillRect(0, barY + i * (barH / N), W * pct, barH / N);
+  const isCelebrating = celebFrame >= 0;
+  const isRacing      = cdFrame < 0 && !isCelebrating;
+
+  // ── Live race ranks (0 = leading) ─────────────────────────────────────────
+  const ranks = positions.map((p, i) =>
+    positions.filter((q, j) => j !== i && q > p).length,
+  );
+  function rankStr(r) {
+    return r === 0 ? '1ST' : r === 1 ? '2ND' : r === 2 ? '3RD' : (r + 1) + 'TH';
   }
 
-  // ── Player name labels (projected car positions) ──────────────────────────
+  // ── Progress bar strip (top of screen) ────────────────────────────────────
+  const RANK_W  = 28;   // pixels reserved left of bars for rank labels
+  const BAR_H   = 6;    // height per car bar
+  const BAR_GAP = 2;    // gap between bars
+  const BAR_TOP = 3;
+  const STRIP_H = BAR_TOP + N * BAR_H + (N - 1) * BAR_GAP + 3;
+
+  ctx.fillStyle = 'rgba(8,10,18,0.78)';
+  ctx.fillRect(0, 0, W, STRIP_H);
+
+  for (let i = 0; i < N; i++) {
+    const pct  = Math.min(1, positions[i] / TRACK_LENGTH);
+    const barY = BAR_TOP + i * (BAR_H + BAR_GAP);
+    const barX = RANK_W;
+    const barW = (W - RANK_W) * pct;
+
+    // Bar gradient: muted at start, full color at tip
+    if (barW > 1) {
+      const col  = HUD_COLORS[i % HUD_COLORS.length];
+      const grad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+      grad.addColorStop(0,   col + '55');
+      grad.addColorStop(0.6, col + 'bb');
+      grad.addColorStop(1,   col);
+      ctx.fillStyle = grad;
+      ctx.fillRect(barX, barY, barW, BAR_H);
+    }
+
+    // Leading-edge pip
+    if (barW > 4) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(RANK_W + barW - 3, barY, 3, BAR_H);
+    }
+
+    // Rank label (left gutter)
+    const rStr  = rankStr(ranks[i]);
+    const rCol  = ranks[i] === 0 ? '#ffd700' : 'rgba(200,200,200,0.70)';
+    ctx.save();
+    ctx.font = 'bold 7px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.95)';
+    ctx.shadowBlur  = 3;
+    ctx.fillStyle   = rCol;
+    ctx.fillText(rStr, RANK_W / 2, barY + BAR_H / 2);
+    ctx.restore();
+  }
+
+  // ── Speed readout — camera-followed car, right edge below bar strip ────────
+  if (isRacing && speeds && leadIdx >= 0 && speeds[leadIdx] > 0) {
+    const kmh = Math.round(speeds[leadIdx] * 10);
+    ctx.save();
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(0,0,0,0.95)';
+    ctx.shadowBlur  = 4;
+    ctx.fillStyle   = 'rgba(255,255,255,0.72)';
+    ctx.fillText(kmh + ' km/h', W - 4, STRIP_H + 2);
+    ctx.restore();
+  }
+
+  // ── Player name labels + rank badge (projected from 3D car position) ──────
   for (let i = 0; i < N; i++) {
     const name = playerNames[i];
     if (!name) continue;
 
-    // Project a point just above the car roof (~1.0 world units above the group).
-    // Keeping Y small avoids the label drifting up/ahead due to perspective
-    // from the low camera (Y=2.5). The group Y is ~0, model offset adds 0.5,
-    // scaled car height ~1.0 — so Y=1.0 puts the label just above the roof.
     const above = carMeshes[i].position.clone();
     above.y = 1.0;
     const ndc = above.project(camera);
     if (ndc.z >= 1.0) continue;   // behind camera
 
     const sx = (ndc.x + 1) / 2 * W;
-    // NDC Y is already in [-1,1] with +1 at top; canvas Y=0 is also at top
-    // because of the flipY + ortho setup, so the 3D projection maps directly:
     const sy = (1 - (ndc.y + 1) / 2) * H;
-
     if (sx < -100 || sx > W + 100 || sy < 0 || sy > H) continue;
 
     ctx.save();
-    ctx.textAlign = 'center';
+    ctx.textAlign    = 'center';
     ctx.textBaseline = 'bottom';
     ctx.shadowOffsetX = 1;
     ctx.shadowOffsetY = 1;
 
-    // WINNER badge — shown above the winning car during celebration
-    if (celebFrame >= 0 && i === winnerIdx) {
+    // WINNER badge — pulsing gold above car during celebration
+    if (isCelebrating && i === winnerIdx) {
       const pulse   = 0.75 + 0.25 * Math.sin(celebFrame * 0.28);
       const fappear = Math.min(1, celebFrame / 10);
       const wsize   = Math.round(Math.min(W, H) * 0.068);
-      ctx.font = `bold ${wsize}px monospace`;
+      ctx.font        = `bold ${wsize}px monospace`;
       ctx.globalAlpha = fappear * pulse;
-      ctx.fillStyle = '#ffd700';
+      ctx.fillStyle   = '#ffd700';
       ctx.shadowColor = '#ff8800';
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur  = 20;
       ctx.fillText('WINNER', sx, sy - 18);
       ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
+      ctx.shadowBlur  = 0;
     }
 
-    // Player name label
-    ctx.font = 'bold 13px monospace';
+    // Player name
+    ctx.font        = 'bold 13px monospace';
     ctx.shadowColor = 'rgba(0,0,0,0.95)';
-    ctx.shadowBlur = 5;
-    ctx.fillStyle = '#ffffff';
-
+    ctx.shadowBlur  = 5;
+    ctx.fillStyle   = '#ffffff';
     let label = name;
     while (label.length > 1 && ctx.measureText(label).width > 110) label = label.slice(0, -1);
-    if (label.length < name.length) label = label.slice(0, -1) + '…';
+    if (label.length < name.length) label = label.slice(0, -1) + '\u2026';
     ctx.fillText(label, sx, sy);
+
+    // Position rank badge below name (hidden once celebration starts)
+    if (!isCelebrating) {
+      const rStr = rankStr(ranks[i]);
+      ctx.font        = 'bold 10px monospace';
+      ctx.fillStyle   = ranks[i] === 0 ? '#ffd700' : 'rgba(230,230,230,0.70)';
+      ctx.shadowBlur  = 4;
+      ctx.textBaseline = 'top';
+      ctx.fillText(rStr, sx, sy + 2);
+    }
+
     ctx.restore();
   }
 
   // ── Countdown ─────────────────────────────────────────────────────────────
-  if (cdFrame > 0) drawCountdownHud(ctx, W, H, cdFrame);
+  if (cdFrame > 0) {
+    // Brief green screen flash at the start of GO
+    if (cdFrame > COUNTDOWN_STEP * 3) {
+      const goFrame   = cdFrame - COUNTDOWN_STEP * 3;
+      const flashAlpha = Math.max(0, (1 - goFrame / 7) * 0.32);
+      if (flashAlpha > 0) {
+        ctx.fillStyle = `rgba(80,255,140,${flashAlpha.toFixed(3)})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+    }
+    drawCountdownHud(ctx, W, H, cdFrame);
+  }
 
   // ── Victory flash ─────────────────────────────────────────────────────────
-  if (celebFrame >= 0 && celebFrame < END_CELEBRATE && celebFrame % 10 < 5) {
+  if (isCelebrating && celebFrame < END_CELEBRATE && celebFrame % 10 < 5) {
     ctx.fillStyle = 'rgba(255,215,40,0.14)';
     ctx.fillRect(0, 0, W, H);
+  }
+
+  // ── Results banner ────────────────────────────────────────────────────────
+  // Appears after the initial celebration flash, fades in over 12 frames.
+  // For real races, shows winner name + payout. For demo, winner name only.
+  if (isCelebrating && celebFrame >= 20) {
+    const fadeFrac  = Math.min(1, (celebFrame - 20) / 12);
+    const winName   = playerNames[winnerIdx] || 'Winner';
+    const winColor  = HUD_COLORS[winnerIdx % HUD_COLORS.length];
+
+    const panW = Math.min(W * 0.82, 280);
+    const panH = payoutLabel ? 58 : 42;
+    const panX = (W - panW) / 2;
+    const panY = H * 0.72;
+
+    ctx.save();
+    ctx.globalAlpha = fadeFrac;
+
+    // Panel background with colored border
+    ctx.fillStyle   = 'rgba(6,8,16,0.90)';
+    ctx.strokeStyle = winColor;
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.rect(panX, panY, panW, panH);
+    ctx.fill();
+    ctx.stroke();
+
+    // Winner name line
+    const nameSize = Math.max(12, Math.round(Math.min(panW * 0.092, 17)));
+    ctx.font        = `bold ${nameSize}px monospace`;
+    ctx.textAlign   = 'center';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(0,0,0,0.95)';
+    ctx.shadowBlur  = 6;
+    ctx.fillStyle   = winColor;
+
+    let dispName = winName;
+    // Measure against "[name] wins" — truncate name if needed
+    while (dispName.length > 1 && ctx.measureText(dispName + ' wins').width > panW - 16) {
+      dispName = dispName.slice(0, -1);
+    }
+    if (dispName.length < winName.length) dispName = dispName.slice(0, -1) + '\u2026';
+    ctx.fillText(dispName + ' wins', W / 2, panY + 10);
+
+    // Payout line (real races only)
+    if (payoutLabel) {
+      const paySize = Math.max(10, Math.round(nameSize * 0.80));
+      ctx.font       = `bold ${paySize}px monospace`;
+      ctx.fillStyle  = 'rgba(255,255,255,0.85)';
+      ctx.shadowBlur = 3;
+      ctx.fillText(payoutLabel, W / 2, panY + 10 + nameSize + 6);
+    }
+
+    ctx.restore();
   }
 }
 
@@ -1500,28 +1636,40 @@ function drawCountdownHud(ctx, W, H, frame) {
   else if (frame <= COUNTDOWN_STEP * 3) { label = '1';   stepFrame = frame - COUNTDOWN_STEP * 2; stepTotal = COUNTDOWN_STEP; }
   else                                  { label = 'GO!'; stepFrame = frame - COUNTDOWN_STEP * 3; stepTotal = COUNTDOWN_GO;   }
 
-  const t      = stepFrame / stepTotal;
-  const alpha  = t < 0.12 ? t / 0.12 : t > 0.78 ? (1 - t) / 0.22 : 1;
-  const scale  = 1 + Math.max(0, 1 - stepFrame / 12) * 0.4;
-  const isGo   = label === 'GO!';
-  const fsize  = Math.round(Math.min(W, H) * (isGo ? 0.20 : 0.26));
-  const glow   = isGo ? '#44ff88' : '#ffd700';
-  const color  = isGo ? '#44ff88' : '#ffffff';
+  const t     = stepFrame / stepTotal;
+  const alpha = t < 0.12 ? t / 0.12 : t > 0.78 ? (1 - t) / 0.22 : 1;
+  const scale = 1 + Math.max(0, 1 - stepFrame / 12) * 0.4;
+  const isGo  = label === 'GO!';
+  const fsize = Math.round(Math.min(W, H) * (isGo ? 0.20 : 0.26));
+
+  // Per-number colors: red → amber → green → bright green
+  const color =
+    isGo          ? '#00ff88' :
+    label === '1' ? '#44ee44' :
+    label === '2' ? '#ffaa22' :
+                    '#ff5544';
+  const glow =
+    isGo          ? '#00ff88' :
+    label === '1' ? '#22cc22' :
+    label === '2' ? '#ee8800' :
+                    '#dd2222';
 
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.translate(W / 2, H * 0.52);
   ctx.scale(scale, scale);
   ctx.font = `bold ${fsize}px monospace`;
-  ctx.textAlign = 'center';
+  ctx.textAlign    = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowColor = glow; ctx.shadowBlur = 40;
-  ctx.fillStyle = color;
+  ctx.shadowColor = glow;
+  ctx.shadowBlur  = 40;
+  ctx.fillStyle   = color;
   ctx.fillText(label, 0, 0);
-  ctx.shadowBlur = 20; ctx.fillText(label, 0, 0);
+  ctx.shadowBlur = 20;
+  ctx.fillText(label, 0, 0);
   ctx.shadowBlur = 0;
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.lineWidth = Math.max(2, fsize * 0.04);
+  ctx.lineWidth   = Math.max(2, fsize * 0.04);
   ctx.strokeText(label, 0, 0);
   ctx.restore();
 }

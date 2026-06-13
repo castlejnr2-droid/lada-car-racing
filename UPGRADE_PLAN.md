@@ -194,37 +194,56 @@ removed on replay cleanup. Stays in until a clean device run is confirmed.
 - WINNER label drawn in HUD `drawHud` when `celebFrame >= 0 && i === winnerIdx`
 - Visual crossing order now always matches declared winner
 
-### Phase 4 — Camera & Cinematics — DONE, awaiting device test
+### Phase 4 — Camera & Cinematics — DONE, device-verified
 
 **Features implemented**:
-- **FOV kick on speed bursts**: `currentFov` lerps toward `FOV_BASE + min(FOV_KICK_MAX=4, excess * scale)` when car 0 speed exceeds `FOV_KICK_THR=6.6` (1.1 × BASE_SPEED). Returns to base at `FOV_LERP_BACK=0.06` per frame. `updateProjectionMatrix()` called only when fov delta > 0.05.
-- **Photo-finish slow-motion**: `isCloseFinish` = finish-time gap between cars < `SLOWMO_TICKS=10` ticks. When true and leading car is past `SLOWMO_START=0.90` × TRACK_LENGTH, playhead advance divided by `SLOWMO_FACTOR=3`. Playback-rate only — sim data untouched.
-- **Winner celebration orbit**: after `END_DRIVE` frames, camera arcs around winning car at `ORBIT_RADIUS=5.5` world units, `ORBIT_SPEED=0.028` rad/frame. Blends in over 20 frames via `_blend = min(1, orbitAge/20)`. `lookTgt` lerps toward winner position at `0.04 + blend * 0.08`.
-- **Camera shake on pothole hits**: triggered on `hitJustStarted && i === 0`. Random `camShakeDX/DY` offsets decay via `exp(-(age/SHAKE_FRAMES) * 3.5)` over `SHAKE_FRAMES=8` frames.
+- **FOV kick on speed bursts**: `currentFov` lerps toward `FOV_BASE + min(FOV_KICK_MAX=4, excess * scale)` when the camera-followed car's speed exceeds `FOV_KICK_THR=6.6` (1.1 × BASE_SPEED). Returns to base at `FOV_LERP_BACK=0.06` per frame. `updateProjectionMatrix()` only when delta > 0.05.
+- **Photo-finish slow-motion**: `isCloseFinish` = finish-time gap < `SLOWMO_TICKS=10` ticks. When true and leader is past `SLOWMO_START=0.90` × TRACK_LENGTH, playhead advance divided by `SLOWMO_FACTOR=3`. Playback-rate only.
+- **Winner celebration orbit**: after `END_DRIVE` frames, camera arcs around winning car at `ORBIT_RADIUS=5.5` world units, `ORBIT_SPEED=0.028` rad/frame, blends in over 20 frames.
+- **Camera shake on pothole hits**: triggered on `hitJustStarted && i === leadIdx` (camera-followed car). Random `camShakeDX/DY` decay via `exp(-(age/SHAKE_FRAMES)*3.5)` over 8 frames.
+
+**Camera framing fix (post-device-test)**:
+- FOV kick and shake now wired to `leadIdx` (camera-followed car), not hardcoded to car 0.
+- Camera X tracks midpoint of all lanes (`laneX.reduce(...)/N = 0` for symmetric 2-car layout) so both cars stay equally in frame.
+- `LANE_SPREAD = 4.8` → cars at ±1.2 world units. Initial `LANE_SPREAD=7.2` (±1.8) clipped Player 2 at screen edge.
+
+**Silent error overlay**: pre-created hidden `<div>` (zero cost when silent), visible only on throw, removed on replay cleanup. Persists for debugging — only remove once device runs are consistently clean.
+
+**vercel.json rule**: never add non-schema properties. `"toolbar": false` is not a valid Vercel schema key — it failed the build. Toolbar visibility is controlled from the Vercel dashboard.
+
+**Dust particles (post-device-test)**:
+- `sizeAttenuation: false` + `size: 5` (fixed pixels). `sizeAttenuation: true` caused giant squares when a burst spawned close to the camera.
+- `dustColor` added to all three themes: tan (day), dark grit (dusk), white-grey puff (snow).
+
+**Finish choreography (post-device-test)**:
+Three cases handled by pre-computed `visFinishTick[]` + blend-zone remap:
+1. **Blowout** (winner crosses first in raw sim): `visFinishTick = finishPlayheads` for all cars — no remap, raw positions used throughout.
+2. **Close finish** (winner and loser cross within `SLOWMO_TICKS`): slow-mo already engaged; loser may need remap if it crossed first by a small margin.
+3. **Loser-overshoot overtake** (winner has bigger overshoot but crosses later): loser's display position linearly remapped in final 18% of track (`finishBlendStart = 984`) to arrive at `TRACK_LENGTH` at `finishPlayheads[winner] + MIN_VIS_CROSS_GAP=4` ticks instead of its raw crossing time. Produces a gentle visible deceleration; no freeze, no teleport. All keyed to `playhead` (same time base as slow-mo) — no mismatch.
 
 **Constants**:
 ```
 FOV_BASE=65  FOV_KICK_MAX=4  FOV_KICK_THR=6.6  FOV_LERP_BACK=0.06
 SHAKE_FRAMES=8  ORBIT_RADIUS=5.5  ORBIT_SPEED=0.028
 SLOWMO_FACTOR=3  SLOWMO_START=0.90  SLOWMO_TICKS=10
+FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 ```
 
-**Constraints respected**: all camera changes read from `sim.history` and `carMeshes[i].position` only. Photo-finish slow-mo adjusts `playhead` advance rate only — never modifies tick data or positions.
+### Phase 5 — HUD Polish — DONE, awaiting device test
 
-### Phase 5 — HUD Polish — NOT STARTED
-**Goal**: Better 2D overlay drawn on the HUD canvas in `drawHud()`.
+**Features implemented**:
 
-**Features**:
-- **Live position indicator**: "1st" / "2nd" badge near each car label, updates each tick
-- **Speed readout**: km/h approximation from `interpSpeed`, shown for the player's car (index 0)
-- **Animated progress bar**: current bar is flat 5px strip. Make it taller (8px), add gradient,
-  add a small car icon at the leading edge of each bar
-- **Countdown upgrade**: current "3-2-1-GO!" is text only. Add scale-pulse, colour change
-  per number (red=3, amber=2, green=1, bright green=GO), brief screen flash on GO
-- **Results banner**: after race, overlay showing winner name and payout (95% of pot) in large text
-  before transitioning to ResultScreen. Currently ResultScreen is shown immediately after replay.
+- **Progress bar**: per-car bars (6px each, 2px gap), gradient fill (dim at start, bright at tip), 3px white leading-edge pip. 28px left gutter holds rank labels.
+- **Live rank badges**: `1ST` / `2ND` drawn both in bar gutter (7px, gold/grey) and below each car name label (10px, same colors). Hidden during celebration.
+- **Speed readout**: `Math.round(interpSpeeds[leadIdx] * 10)` km/h, shown right-of-bar-strip during racing only. Scale factor 10: BASE_SPEED=6 → 60 km/h.
+- **Countdown upgrade**: per-number colors — red (`#ff5544`) for 3, amber (`#ffaa22`) for 2, green (`#44ee44`) for 1, bright green (`#00ff88`) for GO. Brief translucent green screen flash at GO onset (7 frames, fades from alpha 0.32).
+- **Results banner**: appears at `celebFrame=20`, fades in over 12 frames. Dark panel with winner-color border. Winner name + " wins" on first line (truncated if long). Optional `payoutLabel` string on second line (real races only — `Race.jsx` passes `"Prize: X.XX LADA"` computed as `BigInt(race.pot) * 95n / 100n`; demo races pass nothing). No-hyphen compliant throughout.
 
-**Note**: HUD is 2D canvas drawn each frame — very cheap. No WebGL changes needed.
+**`drawHud` signature**: `(ctx, W, H, N, positions, speeds, leadIdx, playerNames, carMeshes, camera, cdFrame, celebFrame, winnerIdx, payoutLabel)`
+
+**`runReplay` options**: added optional `payoutLabel = null`. `Race.jsx` passes it; `DemoRace.jsx` unchanged (gets null → demo banner variant).
+
+**All HUD reads from sim history + interpolated display values — no new data sources.**
 
 ### Phase 6 — Sound — NOT STARTED
 **Goal**: Lightweight audio. Must init only after a user tap. Fail silently if WebAudio unavailable.
