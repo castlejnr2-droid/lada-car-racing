@@ -233,7 +233,7 @@ function NoWalletView({ onDemo }) {
 
   return (
     <div className="empty" style={{ paddingTop: 32 }}>
-      <p style={{ marginBottom: 20 }}>
+      <p style={{ marginBottom: 20, textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
         Connect your TON wallet to start racing.
       </p>
 
@@ -256,7 +256,7 @@ function NoWalletView({ onDemo }) {
         🏁 &nbsp;Watch Demo
       </button>
 
-      <p style={{ color: 'var(--fg-muted)', fontSize: 12 }}>
+      <p style={{ color: 'var(--fg-muted)', fontSize: 12, textShadow: '0 1px 6px rgba(0,0,0,0.8)' }}>
         Demo starts in {secs}s…
       </p>
     </div>

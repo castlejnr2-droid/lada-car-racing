@@ -2,22 +2,33 @@
  * menuScene.js — ambient looping 3D background for the Home screen.
  *
  * ISOLATED from runReplay, physics.js, rng.js, and all payment paths.
- * Scene: a Lada cruises a Soviet boulevard at dusk — amber sky, silhouetted
- * panelki, cobra-head lamp posts, sagging power lines, birch trees.
+ *
+ * Scene: a Soviet boulevard with 4 Ladas cruising past in bright colours.
+ * Sky slowly cycles from sunny day (blue sky, green grass, beige panelki)
+ * to a brief golden dusk and back. The cycle is biased toward the bright
+ * day end so the first impression is always welcoming and sunny.
  *
  * Performance guarantees:
  *   - 30fps cap (FRAME_MS gate in RAF callback)
- *   - RAF loop stops on pause(), on document.hidden, and on destroy()
+ *   - RAF loop stops on pause(), document.hidden, and destroy()
  *   - Double-start guarded: startLoop() checks rafId before scheduling
+ *   - Theme cycle: only lerps existing uniform/colour values — no scene rebuild
+ *   - Cars: single GLB load, gltf.scene.clone() per extra car, tint via
+ *     per-node material.clone() — geometry shared, no extra draw calls
  *   - Merged geometry (buildings, lamp hardware, glow discs)
- *   - InstancedMesh for trees (2 draw calls total)
+ *   - InstancedMesh for trees (2 draw calls)
  *   - No postprocessing, no shadows
  *
+ * Cycle math:
+ *   cycleAngle advances each frame. rawT = (1−cos(angle))/2 runs 0→1→0.
+ *   duskT = rawT³ (cubic) keeps the scene near day for ~80% of the cycle;
+ *   dusk is a brief, pretty peak.
+ *   cycleAngle starts at 0 → duskT=0 → pure bright day on first open.
+ *
  * Flash-free init:
- *   Canvas starts at opacity 0 (CSS). After the very first rendered frame,
- *   opacity is set to 1 and the CSS transition (0.4s ease) fades it in over
- *   the static background. The background colour matches the dusk fog so the
- *   transition is imperceptible.
+ *   Canvas starts at opacity 0 (CSS). After the first rendered frame,
+ *   opacity becomes 1 and the CSS transition (0.4s ease) fades it in.
+ *   The .app fallback background matches the day fog colour.
  *
  * Returns { pause(), resume(), destroy() }.
  */
@@ -27,65 +38,115 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-// ── Dusk theme — Soviet boulevard at golden hour ──────────────────────────────
-// Colours adapted from THEME_DUSK in replay.js for the menu's shorter scene.
-const THEME = {
-  ambientColor:    0xf0d0a0,  ambientIntensity: 3.8,
-  sunColor:        0xff7820,  sunIntensity:     7.0,
-  fogColor:        0xd07038,  fogNear: 62, fogFar: 190,  // shorter than race track
-  skyHorizon:     [0.98, 0.55, 0.18],  // deep amber-orange
-  skyZenith:      [0.22, 0.18, 0.42],  // indigo-purple
-  groundColor:     0x4a6022,   // dusk grass
-  roadColor:       0x3c3830,   // near-black wet asphalt
-  lineColor:       0x5a5448,   // dim edge lines
-  treeTrunkColor:  0xd0b888,   // warm amber bark
-  treeLeafColor:   0x1e3c08,   // dark silhouette foliage
-  cloudColor:      0xff8844,   cloudOpacity: 0.60,
-  buildingColors: [0x9a9080, 0x8a847a, 0xa89c8e],  // muted evening panelki
-  lampGlowColor:   0xffaa33,   // amber street-lamp glow
-  lampEmissive:    0xffd060,
-  wireColor:       0x1a1212,   // dark power-line wire
+// ── Day theme: bright Soviet boulevard ───────────────────────────────────────
+const THEME_DAY = {
+  ambientColor:      0xdde8f0,  ambientIntensity: 4.5,
+  sunColor:          0xfff4e0,  sunIntensity:     6.0,
+  fogColor:          0xc0ccd8,  fogNear: 65,  fogFar: 200,
+  skyHorizon:       [0.82, 0.86, 0.90],   // light blue horizon
+  skyZenith:        [0.45, 0.62, 0.80],   // deep sky blue
+  groundColor:       0x5a7a35,            // fresh green grass
+  roadColor:         0x525252,            // grey asphalt
+  treeTrunkColor:    0xf0ece8,            // white birch bark
+  treeLeafColor:     0x4a8828,            // summer green
+  cloudColor:        0xffffff,  cloudOpacity: 0.78,
+  buildingColors:   [0xd4c8b0, 0xc8bea8, 0xdad0ba],  // warm beige Soviet panels
 };
 
+// ── Dusk theme: golden hour on the boulevard ──────────────────────────────────
+const THEME_DUSK = {
+  ambientColor:      0xf0d0a0,  ambientIntensity: 3.5,
+  sunColor:          0xff7820,  sunIntensity:     6.5,
+  fogColor:          0xd07038,  fogNear: 60,  fogFar: 185,
+  skyHorizon:       [0.98, 0.55, 0.18],   // deep amber-orange
+  skyZenith:        [0.22, 0.18, 0.42],   // indigo-purple
+  groundColor:       0x4a6022,            // dusk-shadowed grass
+  roadColor:         0x3c3830,            // near-black wet asphalt
+  treeTrunkColor:    0xd0b888,            // warm amber bark
+  treeLeafColor:     0x1e3c08,            // dark silhouette foliage
+  cloudColor:        0xff8844,  cloudOpacity: 0.60,
+  buildingColors:   [0x9a9080, 0x8a847a, 0xa89c8e],  // muted evening panels
+};
+
+// ── Cycle parameters ──────────────────────────────────────────────────────────
+// Full period 80 s. rawT = (1−cos(angle))/2 ∈ [0,1]. duskT = rawT³ keeps
+// ~80% of the cycle time near day (rawT < 0.7 → duskT < 0.34).
+const CYCLE_PERIOD_MS = 80_000;
+const CYCLE_STEP      = (2 * Math.PI) / CYCLE_PERIOD_MS;
+
+// ── Road / scene geometry constants ──────────────────────────────────────────
 const ROAD_W    = 14;
 const ROAD_HALF = ROAD_W / 2;
 const CAR_SCALE = 1.5;
-const CAR_LANE  = -1.2;
-const CAR_SPEED = 0.14;       // world-units/frame at 30fps ≈ 4.2 u/s
 
-// Car moves from behind the camera (outside frustum) forward into the fog.
-// Both endpoints are invisible — the loop reset is imperceptible.
+// Loop extents — both ends invisible:
+//   LOOP_START (36) is behind the camera (camera z=28, outside frustum).
+//   LOOP_END (-275) is past fog far (camera z=28, fog far ≈185–200 → invisible at z<−157).
 const LOOP_START =  36;
-const LOOP_END   = -270;
+const LOOP_END   = -275;
+const LOOP_LEN   = LOOP_START - LOOP_END;  // ≈ 311 world units
 
-// Fixed camera looking down the boulevard
+// ── Car fleet ─────────────────────────────────────────────────────────────────
+// 4 cars: 1 hero + 3 companions. Shared GLB load; per-car tint via material clone.
+// startFrac: initial position along loop (0=behind camera, 1=past fog end).
+// lane: X position on road (ROAD_HALF = 7, so stay within ±6).
+const CAR_CONFIGS = [
+  { lane: -1.2, speed: 0.20, startFrac: 0.00, tint: 0xd42a10 },  // hero — Soviet red
+  { lane:  1.2, speed: 0.13, startFrac: 0.27, tint: 0x1448c0 },  // cobalt blue
+  { lane: -2.6, speed: 0.25, startFrac: 0.54, tint: 0xe0b400 },  // mustard yellow, fast
+  { lane:  2.6, speed: 0.10, startFrac: 0.74, tint: 0x257a22 },  // Soviet green, slow
+];
+
+// ── Camera ────────────────────────────────────────────────────────────────────
 const CAM_POS    = new THREE.Vector3(7.5, 4.2, 28);
 const CAM_LOOKAT = new THREE.Vector3(0, 1.5, -35);
 
+// ── Framerate cap ─────────────────────────────────────────────────────────────
 const TARGET_FPS = 30;
 const FRAME_MS   = 1000 / TARGET_FPS;
 
 const GLB_URL = 'https://cdn.jsdelivr.net/gh/castlejnr2-droid/lada-car-racing@main/frontend/public/car.glb';
 
-// Lamp post layout — mirrors buildLampPosts() proportions from replay.js
-const POLE_H  = 7;
-const LAMP_SIDE_X = ROAD_HALF + 1.8;   // same offset as race scene
-const LAMP_COUNT  = 9;                  // per side, covers the visible corridor
-const Z_FRONT     = 30;
-const Z_BACK      = -290;
+// ── Lamp post constants (mirrors race scene proportions) ─────────────────────
+const POLE_H       = 7;
+const LAMP_SIDE_X  = ROAD_HALF + 1.8;
+const LAMP_COUNT   = 9;
+const Z_FRONT      = 30;
+const Z_BACK       = -290;
 const LAMP_SPACING = (Z_FRONT - Z_BACK) / (LAMP_COUNT - 1);
 
-// ── Public entry ──────────────────────────────────────────────────────────────
-export function startMenuScene(canvas) {
-  let rafId        = null;
-  let paused       = false;
-  let destroyed    = false;
-  let lastFrameMs  = 0;
-  let carZ         = LOOP_START;
-  let swayFrame    = 0;
-  let firstFrame   = true;
+// ── Zero-allocation lerp helpers (module-level temp objects) ──────────────────
+const _ca = new THREE.Color();
+const _cb = new THREE.Color();
 
-  // Ensure canvas is invisible until the first rendered frame (flash-free init)
+/** Lerp hexA toward hexB by t, copy result into target (a THREE.Color). No allocation. */
+function setLerpC(target, hexA, hexB, t) {
+  _ca.setHex(hexA);
+  _cb.setHex(hexB);
+  _ca.lerp(_cb, t);
+  target.copy(_ca);
+}
+
+function lerpN(a, b, t) { return a + (b - a) * t; }
+
+// ── Public entry point ────────────────────────────────────────────────────────
+export function startMenuScene(canvas) {
+  let rafId       = null;
+  let paused      = false;
+  let destroyed   = false;
+  let lastFrameMs = 0;
+  let firstFrame  = true;
+  let cycleAngle  = 0;  // 0 → duskT=0 → pure day on first open
+
+  // Per-car state — each car advances independently
+  const cars = CAR_CONFIGS.map((cfg, i) => ({
+    group:     new THREE.Group(),
+    zPos:      LOOP_START - cfg.startFrac * LOOP_LEN,
+    swayFrame: i * 23,   // stagger the gentle body-sway phase per car
+    cfg,
+  }));
+
+  // Canvas starts invisible; first render fades it in (flash-free init)
   canvas.style.opacity = '0';
 
   // ── Renderer ──────────────────────────────────────────────────────────────
@@ -98,59 +159,67 @@ export function startMenuScene(canvas) {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   } catch (e) {
     console.warn('[menuScene] WebGL unavailable — static background shown:', e);
-    canvas.style.opacity = '1';  // restore so CSS fallback shows
+    canvas.style.opacity = '1';   // show CSS fallback colour
     return stub();
   }
   renderer.setPixelRatio(dpr);
   renderer.setSize(W, H, false);
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.setClearColor(THEME.fogColor);
+  renderer.setClearColor(THEME_DAY.fogColor);
 
-  // ── Scene ──────────────────────────────────────────────────────────────────
+  // ── Scene ─────────────────────────────────────────────────────────────────
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(THEME.fogColor);
-  scene.fog        = new THREE.Fog(THEME.fogColor, THEME.fogNear, THEME.fogFar);
+  scene.background = new THREE.Color(THEME_DAY.fogColor);
+  scene.fog        = new THREE.Fog(THEME_DAY.fogColor, THEME_DAY.fogNear, THEME_DAY.fogFar);
 
-  buildMenuSky(scene);
-  const cloudMesh = buildMenuClouds(scene);
-  buildMenuLighting(scene);
-  buildMenuRoad(scene);
-  buildMenuBuildings(scene);
-  buildMenuTrees(scene);
-  buildMenuLampPosts(scene);  // lamp posts + cobra heads + glow discs + power wires
+  // Build scene; each builder returns the mutable refs needed for the theme cycle.
+  const { skyMat }              = buildMenuSky(scene);
+  const { cloudMesh, cloudMat } = buildMenuClouds(scene);
+  const { ambientLight, sunLight } = buildMenuLighting(scene);
+  const { roadMat, grassMat }   = buildMenuRoad(scene);
+  const { buildingMats }        = buildMenuBuildings(scene);
+  const { leafMat, trunkMat }   = buildMenuTrees(scene);
+  buildMenuLampPosts(scene);
 
   // ── Camera ────────────────────────────────────────────────────────────────
   const camera = new THREE.PerspectiveCamera(62, W / H, 0.5, 300);
   camera.position.copy(CAM_POS);
   camera.lookAt(CAM_LOOKAT);
 
-  // ── Car ───────────────────────────────────────────────────────────────────
-  const carGroup = new THREE.Group();
-  carGroup.position.set(CAR_LANE, 0, LOOP_START);
-  scene.add(carGroup);
+  // ── Car groups ────────────────────────────────────────────────────────────
+  for (const car of cars) {
+    car.group.position.set(car.cfg.lane, 0, car.zPos);
+    scene.add(car.group);
+  }
 
+  // Load GLB once; clone scene for each extra car and apply individual tint.
   const dracoLoader = new DRACOLoader();
   dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
   const gltfLoader = new GLTFLoader();
   gltfLoader.setDRACOLoader(dracoLoader);
   gltfLoader.load(GLB_URL, (gltf) => {
     if (destroyed) return;
-    const model = gltf.scene;
-    model.scale.setScalar(CAR_SCALE);
-    model.rotation.y = 0;     // faces -Z (forward), same convention as race scene
-    model.position.y = 0.5;
-    model.frustumCulled = false;  // group handles culling
-    carGroup.add(model);
-  }, undefined, (e) => console.warn('[menuScene] car.glb load failed:', e));
+    for (let i = 0; i < cars.length; i++) {
+      // First car gets the original scene; others get a deep clone.
+      const model = i === 0 ? gltf.scene : gltf.scene.clone();
+      applyCarTint(model, CAR_CONFIGS[i].tint);
+      model.scale.setScalar(CAR_SCALE);
+      model.rotation.y = 0;    // faces −Z (forward), same convention as race scene
+      model.position.y = 0.5;
+      model.frustumCulled = false;
+      cars[i].group.add(model);
+    }
+  }, undefined, (e) => console.warn('[menuScene] car.glb failed:', e));
 
   // ── Render loop ───────────────────────────────────────────────────────────
-  // Performance contract:
-  //   - Only one RAF chain runs at a time (rafId guard in startLoop)
-  //   - Loop stops when paused=true or destroyed=true (checked at tick entry)
-  //   - visibilitychange stops loop when app is backgrounded
+  // Contract:
+  //   • Only one RAF chain runs at a time — rafId guard in startLoop
+  //   • rafId is cleared at tick entry before re-arm (prevents double-start race)
+  //   • Loop exits immediately when paused or destroyed
+  //   • visibilitychange listener stops/starts loop with app focus
+  //   • Theme cycle: pure arithmetic on pre-allocated objects — no allocation
   function tick(now) {
-    // Clear rafId first so startLoop can re-arm if resume() races with this callback
-    rafId = null;
+    rafId = null;                       // clear before re-arm
     if (destroyed || paused) return;
     rafId = requestAnimationFrame(tick);
 
@@ -159,24 +228,67 @@ export function startMenuScene(canvas) {
     if (delta < FRAME_MS) return;
     lastFrameMs = now - (delta % FRAME_MS);
 
-    // Advance car; both endpoints invisible so loop reset is imperceptible
-    carZ -= CAR_SPEED;
-    if (carZ < LOOP_END) carZ = LOOP_START;
-    carGroup.position.z = carZ;
+    // ── Day/dusk theme cycle ────────────────────────────────────────────────
+    cycleAngle += CYCLE_STEP * delta;
+    if (cycleAngle > 2 * Math.PI) cycleAngle -= 2 * Math.PI;
 
-    // Gentle body sway
-    swayFrame++;
-    carGroup.rotation.z = Math.sin(swayFrame * 0.045) * 0.012;
+    const rawT  = (1 - Math.cos(cycleAngle)) / 2;  // 0 → 1 → 0 per cycle
+    const t     = rawT * rawT * rawT;               // cubic bias: ~80% time near day
 
-    // Drift cloud slowly across sky
-    if (cloudMesh) cloudMesh.position.x += 0.018;
+    // Sky gradient uniforms (Vector3.set — in-place, no alloc)
+    const DH = THEME_DAY.skyHorizon,  KH = THEME_DUSK.skyHorizon;
+    const DZ = THEME_DAY.skyZenith,   KZ = THEME_DUSK.skyZenith;
+    skyMat.uniforms.uHorizon.value.set(
+      lerpN(DH[0], KH[0], t), lerpN(DH[1], KH[1], t), lerpN(DH[2], KH[2], t),
+    );
+    skyMat.uniforms.uZenith.value.set(
+      lerpN(DZ[0], KZ[0], t), lerpN(DZ[1], KZ[1], t), lerpN(DZ[2], KZ[2], t),
+    );
+
+    // Fog + background (keep in sync)
+    setLerpC(scene.fog.color, THEME_DAY.fogColor, THEME_DUSK.fogColor, t);
+    scene.background.copy(scene.fog.color);
+    scene.fog.near = lerpN(THEME_DAY.fogNear, THEME_DUSK.fogNear, t);
+    scene.fog.far  = lerpN(THEME_DAY.fogFar,  THEME_DUSK.fogFar,  t);
+
+    // Lighting
+    setLerpC(ambientLight.color, THEME_DAY.ambientColor, THEME_DUSK.ambientColor, t);
+    ambientLight.intensity = lerpN(THEME_DAY.ambientIntensity, THEME_DUSK.ambientIntensity, t);
+    setLerpC(sunLight.color, THEME_DAY.sunColor, THEME_DUSK.sunColor, t);
+    sunLight.intensity = lerpN(THEME_DAY.sunIntensity, THEME_DUSK.sunIntensity, t);
+
+    // Ground and vegetation
+    setLerpC(grassMat.color, THEME_DAY.groundColor,   THEME_DUSK.groundColor,   t);
+    setLerpC(roadMat.color,  THEME_DAY.roadColor,     THEME_DUSK.roadColor,     t);
+    setLerpC(leafMat.color,  THEME_DAY.treeLeafColor,  THEME_DUSK.treeLeafColor,  t);
+    setLerpC(trunkMat.color, THEME_DAY.treeTrunkColor, THEME_DUSK.treeTrunkColor, t);
+
+    // Buildings (3 colour variants)
+    for (let i = 0; i < 3; i++) {
+      setLerpC(buildingMats[i].color, THEME_DAY.buildingColors[i], THEME_DUSK.buildingColors[i], t);
+    }
+
+    // Clouds
+    setLerpC(cloudMat.color, THEME_DAY.cloudColor, THEME_DUSK.cloudColor, t);
+    cloudMat.opacity = lerpN(THEME_DAY.cloudOpacity, THEME_DUSK.cloudOpacity, t);
+    if (cloudMesh) cloudMesh.position.x += 0.018;  // gentle westward drift
+
+    // ── Car fleet ──────────────────────────────────────────────────────────
+    for (let i = 0; i < cars.length; i++) {
+      const car = cars[i];
+      car.zPos -= car.cfg.speed;
+      if (car.zPos < LOOP_END) car.zPos = LOOP_START;
+      car.group.position.z = car.zPos;
+      car.swayFrame++;
+      // Each car sways at a slightly different phase and amplitude
+      car.group.rotation.z = Math.sin(car.swayFrame * 0.042 + i * 1.3) * 0.011;
+    }
 
     renderer.render(scene, camera);
 
-    // First frame rendered — fade the canvas in smoothly over the static bg
     if (firstFrame) {
       firstFrame = false;
-      canvas.style.opacity = '1';  // CSS transition handles the ease (set in global.css)
+      canvas.style.opacity = '1';   // CSS transition handles the ease
     }
   }
 
@@ -194,8 +306,8 @@ export function startMenuScene(canvas) {
     if (document.hidden) stopLoop();
     else if (!paused) startLoop();
   }
-  document.addEventListener('visibilitychange', onVisibilityChange);
 
+  document.addEventListener('visibilitychange', onVisibilityChange);
   startLoop();
 
   return {
@@ -214,49 +326,64 @@ function stub() {
   return { pause() {}, resume() {}, destroy() {} };
 }
 
-// ── Sky gradient sphere — same GLSL shader as race scene ─────────────────────
-function buildMenuSky(scene) {
-  const [hr, hg, hb] = THEME.skyHorizon;
-  const [zr, zg, zb] = THEME.skyZenith;
-  scene.add(new THREE.Mesh(
-    new THREE.SphereGeometry(280, 16, 8),
-    new THREE.ShaderMaterial({
-      uniforms: {
-        uHorizon: { value: new THREE.Vector3(hr, hg, hb) },
-        uZenith:  { value: new THREE.Vector3(zr, zg, zb) },
-      },
-      vertexShader: /* glsl */`
-        varying float vY;
-        void main() {
-          vY = (modelMatrix * vec4(position, 1.0)).y;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */`
-        precision mediump float;
-        uniform vec3 uHorizon;
-        uniform vec3 uZenith;
-        varying float vY;
-        void main() {
-          float t = clamp(vY / 160.0, 0.0, 1.0);
-          gl_FragColor = vec4(mix(uHorizon, uZenith, pow(t, 0.55)), 1.0);
-        }
-      `,
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-    }),
-  ));
+// ── Apply bright tint to a (possibly cloned) car model ───────────────────────
+// Clones each mesh's material so cars don't share material state.
+function applyCarTint(model, tintHex) {
+  const tint = new THREE.Color(tintHex);
+  model.traverse((node) => {
+    if (!node.isMesh) return;
+    const mat = node.material.clone();   // clone so tints don't bleed between cars
+    mat.color.lerp(tint, 0.55);
+    mat.emissive.copy(tint).multiplyScalar(0.08);
+    node.material = mat;
+  });
 }
 
-// ── Dusk cloud layer — amber-lit, drifts slowly ───────────────────────────────
+// ── Sky gradient sphere — GLSL shader ────────────────────────────────────────
+// Returns { skyMat } so uniforms can be updated in the render loop.
+function buildMenuSky(scene) {
+  const [hr, hg, hb] = THEME_DAY.skyHorizon;
+  const [zr, zg, zb] = THEME_DAY.skyZenith;
+  const skyMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uHorizon: { value: new THREE.Vector3(hr, hg, hb) },
+      uZenith:  { value: new THREE.Vector3(zr, zg, zb) },
+    },
+    vertexShader: /* glsl */`
+      varying float vY;
+      void main() {
+        vY = (modelMatrix * vec4(position, 1.0)).y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */`
+      precision mediump float;
+      uniform vec3 uHorizon;
+      uniform vec3 uZenith;
+      varying float vY;
+      void main() {
+        float t = clamp(vY / 160.0, 0.0, 1.0);
+        gl_FragColor = vec4(mix(uHorizon, uZenith, pow(t, 0.55)), 1.0);
+      }
+    `,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  });
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(280, 16, 8), skyMat));
+  return { skyMat };
+}
+
+// ── Clouds — merged puffs that drift slowly west ──────────────────────────────
+// Returns { cloudMesh, cloudMat } for per-frame colour and drift updates.
 function buildMenuClouds(scene) {
-  const mat = new THREE.MeshLambertMaterial({
-    color: THEME.cloudColor, transparent: true, opacity: THEME.cloudOpacity, fog: false,
+  const cloudMat = new THREE.MeshLambertMaterial({
+    color: THEME_DAY.cloudColor,
+    transparent: true, opacity: THEME_DAY.cloudOpacity,
+    fog: false,
   });
   const CENTRES = [
-    [-60, 50, -70],  [50, 58, -140], [-25, 54, -210],
-    [85, 48, -55],   [-95, 62, -280],
+    [-60, 50, -70], [50, 58, -140], [-25, 54, -210], [85, 48, -55], [-95, 62, -280],
   ];
   const geos = [];
   for (const [cx, cy, cz] of CENTRES) {
@@ -265,48 +392,57 @@ function buildMenuClouds(scene) {
       const r = 6 + Math.abs(Math.sin(p * 1.7 + cx * 0.05)) * 9;
       const g = new THREE.SphereGeometry(r, 6, 4);
       g.scale(1, 0.34, 1);
-      g.translate(cx + Math.sin(p * 2.094) * 16, cy + Math.cos(p) * 2, cz + Math.cos(p * 2.094) * 8);
+      g.translate(
+        cx + Math.sin(p * 2.094) * 16,
+        cy + Math.cos(p) * 2,
+        cz + Math.cos(p * 2.094) * 8,
+      );
       geos.push(g);
     }
   }
   const merged = mergeGeometries(geos);
   geos.forEach((g) => g.dispose());
-  const mesh = new THREE.Mesh(merged, mat);
-  mesh.frustumCulled = false;
-  scene.add(mesh);
-  return mesh;
+  const cloudMesh = new THREE.Mesh(merged, cloudMat);
+  cloudMesh.frustumCulled = false;
+  scene.add(cloudMesh);
+  return { cloudMesh, cloudMat };
 }
 
-// ── Lighting — warm dusk sun + ambient fill + lamp-post point lights ──────────
+// ── Lighting — sun + ambient + static lamp-post point lights ─────────────────
+// Returns { ambientLight, sunLight } for per-frame intensity/colour updates.
 function buildMenuLighting(scene) {
-  scene.add(new THREE.AmbientLight(THEME.ambientColor, THEME.ambientIntensity));
+  const ambientLight = new THREE.AmbientLight(THEME_DAY.ambientColor, THEME_DAY.ambientIntensity);
+  scene.add(ambientLight);
 
-  const sun = new THREE.DirectionalLight(THEME.sunColor, THEME.sunIntensity);
-  sun.position.set(-60, 40, 80);  // low-angle dusk sun from behind camera
-  scene.add(sun);
+  const sunLight = new THREE.DirectionalLight(THEME_DAY.sunColor, THEME_DAY.sunIntensity);
+  sunLight.position.set(-60, 40, 80);   // elevated and slightly behind camera
+  scene.add(sunLight);
 
-  // Warm amber point lights along road centre — simulates lamp-post illumination
-  const ptCol = THEME.lampGlowColor;
+  // Warm amber point lights at lamp-post positions (static — don't need per-frame update)
   for (let i = 0; i < 3; i++) {
-    const pt = new THREE.PointLight(ptCol, 1.2, 70);
+    const pt = new THREE.PointLight(0xffaa33, 1.0, 70);
     pt.position.set(0, POLE_H - 0.5, Z_FRONT - i * (LAMP_SPACING * 3));
     scene.add(pt);
   }
+
+  return { ambientLight, sunLight };
 }
 
-// ── Road — asphalt, grass shoulders, edge lines, centre stripe ────────────────
+// ── Road — asphalt, grass, edge lines, centre stripe ─────────────────────────
+// Returns { roadMat, grassMat } for per-frame colour updates.
 function buildMenuRoad(scene) {
-  const LEN  = Z_FRONT - Z_BACK;
-  const MID  = (Z_FRONT + Z_BACK) / 2;
+  const LEN = Z_FRONT - Z_BACK;
+  const MID = (Z_FRONT + Z_BACK) / 2;
 
-  // Asphalt
-  const asp = new THREE.PlaneGeometry(ROAD_W, LEN);
-  asp.rotateX(-Math.PI / 2);
-  asp.translate(0, 0, MID);
-  scene.add(new THREE.Mesh(asp, new THREE.MeshLambertMaterial({ color: THEME.roadColor })));
+  const roadMat  = new THREE.MeshLambertMaterial({ color: THEME_DAY.roadColor });
+  const grassMat = new THREE.MeshLambertMaterial({ color: THEME_DAY.groundColor });
+  const lineMat  = new THREE.MeshLambertMaterial({ color: 0x808070 });
 
-  // Grass shoulders
-  const grassMat = new THREE.MeshLambertMaterial({ color: THEME.groundColor });
+  const aspGeo = new THREE.PlaneGeometry(ROAD_W, LEN);
+  aspGeo.rotateX(-Math.PI / 2);
+  aspGeo.translate(0, 0, MID);
+  scene.add(new THREE.Mesh(aspGeo, roadMat));
+
   for (const sx of [-1, 1]) {
     const g = new THREE.PlaneGeometry(34, LEN);
     g.rotateX(-Math.PI / 2);
@@ -314,8 +450,6 @@ function buildMenuRoad(scene) {
     scene.add(new THREE.Mesh(g, grassMat));
   }
 
-  // Edge lines
-  const lineMat = new THREE.MeshLambertMaterial({ color: THEME.lineColor });
   for (const sx of [-1, 1]) {
     const l = new THREE.PlaneGeometry(0.18, LEN);
     l.rotateX(-Math.PI / 2);
@@ -323,67 +457,63 @@ function buildMenuRoad(scene) {
     scene.add(new THREE.Mesh(l, lineMat));
   }
 
-  // Centre divider stripe (single solid line)
   const cl = new THREE.PlaneGeometry(0.14, LEN);
   cl.rotateX(-Math.PI / 2);
   cl.translate(0, 0.01, MID);
-  scene.add(new THREE.Mesh(cl, new THREE.MeshLambertMaterial({ color: 0x6a6054 })));
+  scene.add(new THREE.Mesh(cl, new THREE.MeshLambertMaterial({ color: 0x7a7060 })));
+
+  return { roadMat, grassMat };
 }
 
-// ── Soviet panelki apartment blocks — merged per colour variant ───────────────
-// Same mergeGeometries approach as race scene's buildPanelki.
+// ── Soviet panelki — merged per colour variant ────────────────────────────────
+// Returns { buildingMats } (array of 3) for per-frame colour updates.
 function buildMenuBuildings(scene) {
   const CLEARANCE = ROAD_HALF + 17;
-  const mats = THEME.buildingColors.map(
+  const buildingMats = THEME_DAY.buildingColors.map(
     (c) => new THREE.MeshLambertMaterial({ color: c }),
   );
 
   for (const side of [-1, 1]) {
     const buckets = [[], [], []];
     let z = 0, bi = 0;
-
     while (z < 295) {
-      const h    = 18 + Math.abs(Math.sin(bi * 1.73)) * 16;   // 8–34 m  (taller=more Soviet)
-      const w    = 22 + Math.abs(Math.cos(bi * 2.31)) * 12;   // 10–34 m
-      const d    =  9 + Math.abs(Math.sin(bi * 0.91)) *  7;
-      const gap  =  7 + Math.abs(Math.cos(bi * 1.29)) *  9;
-      const xOff =     Math.abs(Math.sin(bi * 3.07)) *  4;
-      const vi   = bi % 3;
-
-      const bx = side * (CLEARANCE + w / 2 + xOff);
-      const bz = -(z + d / 2);
+      const h   = 18 + Math.abs(Math.sin(bi * 1.73)) * 16;
+      const w   = 22 + Math.abs(Math.cos(bi * 2.31)) * 12;
+      const d   =  9 + Math.abs(Math.sin(bi * 0.91)) *  7;
+      const gap =  7 + Math.abs(Math.cos(bi * 1.29)) *  9;
+      const xOff = Math.abs(Math.sin(bi * 3.07)) * 4;
+      const vi  = bi % 3;
       const geo = new THREE.BoxGeometry(w, h, d);
-      geo.translate(bx, h / 2, bz);
+      geo.translate(side * (CLEARANCE + w / 2 + xOff), h / 2, -(z + d / 2));
       buckets[vi].push(geo);
-
       z += d + gap;
       bi++;
     }
-
     for (let vi = 0; vi < 3; vi++) {
       if (!buckets[vi].length) continue;
       const merged = mergeGeometries(buckets[vi]);
       buckets[vi].forEach((g) => g.dispose());
-      scene.add(new THREE.Mesh(merged, mats[vi]));
+      scene.add(new THREE.Mesh(merged, buildingMats[vi]));
     }
   }
+  return { buildingMats };
 }
 
-// ── Birch trees — InstancedMesh, dark dusk silhouette foliage ─────────────────
+// ── Birch trees — InstancedMesh ───────────────────────────────────────────────
+// Returns { leafMat, trunkMat } for per-frame colour updates.
 function buildMenuTrees(scene) {
-  const TREE_X     = ROAD_HALF + 4.2;
-  const COUNT      = 20;
-  const MAX_PUFFS  = COUNT * 5;
+  const TREE_X    = ROAD_HALF + 4.2;
+  const COUNT     = 20;
+  const MAX_PUFFS = COUNT * 5;
+
+  const trunkMat = new THREE.MeshLambertMaterial({ color: THEME_DAY.treeTrunkColor });
+  const leafMat  = new THREE.MeshLambertMaterial({ color: THEME_DAY.treeLeafColor });
 
   const trunkInst = new THREE.InstancedMesh(
-    new THREE.CylinderGeometry(0.20, 0.28, 1, 6),
-    new THREE.MeshLambertMaterial({ color: THEME.treeTrunkColor }),
-    COUNT * 2,
+    new THREE.CylinderGeometry(0.20, 0.28, 1, 6), trunkMat, COUNT * 2,
   );
   const leafInst = new THREE.InstancedMesh(
-    new THREE.SphereGeometry(1, 5, 4),
-    new THREE.MeshLambertMaterial({ color: THEME.treeLeafColor }),
-    MAX_PUFFS * 2,
+    new THREE.SphereGeometry(1, 5, 4), leafMat, MAX_PUFFS * 2,
   );
   trunkInst.frustumCulled = false;
   leafInst.frustumCulled  = false;
@@ -418,70 +548,69 @@ function buildMenuTrees(scene) {
     }
   }
 
-  dummy.position.set(0, -2000, 0); dummy.scale.setScalar(0.001); dummy.updateMatrix();
+  // Park unused instances far below ground
+  dummy.position.set(0, -2000, 0);
+  dummy.scale.setScalar(0.001);
+  dummy.updateMatrix();
   for (let i = tIdx; i < COUNT * 2;     i++) trunkInst.setMatrixAt(i, dummy.matrix);
   for (let i = pIdx; i < MAX_PUFFS * 2; i++) leafInst.setMatrixAt(i, dummy.matrix);
   trunkInst.instanceMatrix.needsUpdate = true;
   leafInst.instanceMatrix.needsUpdate  = true;
+
+  return { trunkMat, leafMat };
 }
 
-// ── Cobra-head lamp posts + power wires — mirrors race scene's buildLampPosts ─
-// Poles, arms, visors merged into 2 draw calls (poleMat).
-// Lamp housings merged into 1 draw call (emissive headMat).
-// Glow discs merged into 1 draw call (additive glowMat).
-// Power wires: one THREE.Line per inter-post gap (catenary sag, same as race).
+// ── Cobra-head lamp posts + catenary power wires ──────────────────────────────
+// Poles, arms/visors, housings, glow discs merged into 4 draw calls.
+// Lamp colours are kept constant (amber looks good at both day and dusk).
 function buildMenuLampPosts(scene) {
   const poleMat = new THREE.MeshLambertMaterial({ color: 0x606068 });
   const headMat = new THREE.MeshLambertMaterial({
-    color: THEME.lampGlowColor,
-    emissive: new THREE.Color(THEME.lampEmissive),
+    color: 0xffaa33,
+    emissive: new THREE.Color(0xffd060),
     emissiveIntensity: 1.4,
   });
   const glowMat = new THREE.MeshBasicMaterial({
-    color: THEME.lampGlowColor,
+    color: 0xffaa33,
     transparent: true, opacity: 0.22,
-    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false, side: THREE.DoubleSide,
   });
-  const wireMat = new THREE.LineBasicMaterial({ color: THEME.wireColor });
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x1a1212 });
 
   const poleGeos = [], armGeos = [], headGeos = [], glowGeos = [];
 
   for (const sx of [-LAMP_SIDE_X, LAMP_SIDE_X]) {
-    const armDir = sx < 0 ? 1 : -1;  // arm points toward road centre
+    const armDir  = sx < 0 ? 1 : -1;   // arm points toward road centre
     const poleZArr = [];
 
     for (let i = 0; i < LAMP_COUNT; i++) {
       const wz = Z_FRONT - i * LAMP_SPACING;
       poleZArr.push(wz);
 
-      // Pole
       const pg = new THREE.CylinderGeometry(0.06, 0.11, POLE_H, 6);
       pg.translate(sx, POLE_H / 2, wz);
       poleGeos.push(pg);
 
-      // Arm
       const ag = new THREE.BoxGeometry(1.5, 0.09, 0.09);
       ag.translate(sx + armDir * 0.75, POLE_H, wz);
       armGeos.push(ag);
 
-      // Visor
       const vg = new THREE.BoxGeometry(0.85, 0.07, 0.58);
       vg.translate(sx + armDir * 1.5, POLE_H + 0.06, wz);
       armGeos.push(vg);
 
-      // Lamp housing (emissive)
       const hg = new THREE.BoxGeometry(0.75, 0.18, 0.50);
       hg.translate(sx + armDir * 1.5, POLE_H - 0.09, wz);
       headGeos.push(hg);
 
-      // Additive glow disc beneath lamp head
       const gg = new THREE.CircleGeometry(0.85, 8);
       gg.rotateX(Math.PI / 2);
       gg.translate(sx + armDir * 1.5, POLE_H - 0.22, wz);
       glowGeos.push(gg);
     }
 
-    // Power wires with catenary sag — one THREE.Line per inter-post segment
+    // Catenary power wires — one Line per inter-post segment
     const wireY = POLE_H - 0.3;
     for (let i = 0; i < poleZArr.length - 1; i++) {
       const z0 = poleZArr[i], z1 = poleZArr[i + 1];
@@ -496,7 +625,6 @@ function buildMenuLampPosts(scene) {
     }
   }
 
-  // 4 merged draw calls for all lamp hardware
   scene.add(new THREE.Mesh(mergeGeometries(poleGeos), poleMat));
   scene.add(new THREE.Mesh(mergeGeometries(armGeos),  poleMat));
   scene.add(new THREE.Mesh(mergeGeometries(headGeos), headMat));

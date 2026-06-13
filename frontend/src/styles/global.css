@@ -60,9 +60,10 @@ button, input, select {
   padding-top: var(--safe-top);
   position: relative;
   isolation: isolate;
-  /* Static fallback colour shown when WebGL is unavailable or still loading.
-     Matches the dusk fog colour so the canvas fade-in is imperceptible. */
-  background: #1e0c06;
+  /* Static fallback colour — matches the day-theme fog colour so the canvas
+     fade-in (opacity 0 → 1) is imperceptible. Dusk was too dark; scene now
+     opens on the bright day end of the cycle. */
+  background: #c0ccd8;
 }
 
 /* Background 3D canvas — sits below the overlay and all content.
@@ -81,19 +82,20 @@ button, input, select {
   transition: opacity 0.4s ease;
 }
 
-/* Cinematic gradient overlay — lets the 3D scene show through in the middle
-   while keeping the header title and tab labels readable at top/bottom.
-   Header and tabbar also have their own solid backgrounds as a second layer. */
+/* Cinematic gradient overlay — lets the 3D scene show through while keeping
+   text readable across both the bright day and dusk ends of the theme cycle.
+   Middle stops are stronger (0.50/0.46) so body text reads cleanly against
+   the bright day sky. Header and tabbar have their own solid bgs on top. */
 .app::before {
   content: '';
   position: absolute;
   inset: 0;
   background: linear-gradient(
     to bottom,
-    rgba(10, 18, 30, 0.62) 0%,
-    rgba(10, 18, 30, 0.30) 28%,
-    rgba(10, 18, 30, 0.28) 68%,
-    rgba(10, 18, 30, 0.58) 100%
+    rgba(10, 18, 30, 0.65) 0%,
+    rgba(10, 18, 30, 0.50) 28%,
+    rgba(10, 18, 30, 0.46) 68%,
+    rgba(10, 18, 30, 0.62) 100%
   );
   z-index: 1;
   pointer-events: none;
