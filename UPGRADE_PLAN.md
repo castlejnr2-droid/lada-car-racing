@@ -332,11 +332,29 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 
 ---
 
+## Leaderboard Upgrade — DONE (commit 7728dfe)
+
+One continuous all-time leaderboard, no seasons or time windows. Two views toggled in the LEADERS tab:
+
+**Most Wins**: ranked by total wins, net profit as tie-breaker.
+**Net Profit**: ranked by net LADA profit = SUM(winner_payout minus own stake WHERE won) minus SUM(stake WHERE lost). Positive shown green with +, negative shown red with minus sign.
+
+**Backend changes** (`backend/src/routes/leaderboard.js`):
+- Added `netProfit` column: `(SUM(winner_payout WHERE winner) - SUM(stake WHERE winner) - SUM(stake WHERE loser))::text`
+- Dropped period filter — always all-time
+- Added `sort` query param (`wins` or `profit`); ORDER BY validated against literal strings only
+- `HAVING COUNT(r.id) > 0` (was wins > 0) so players with only losses appear in profit view
+
+**Frontend changes**:
+- `frontend/src/api/leaderboard.js` — `fetchLeaderboard(sort)` replaces period param
+- `frontend/src/components/tabs/LeaderboardTab.jsx` — period tabs removed, sort toggle added; net profit formatter handles negative BigInt strings; avatar support; wins/losses shown as `W/L`
+
+---
+
 ## Follow-up Roadmap
 
-1. **Leaderboard seasons** — NEXT: backend already has leaderboard; add season resets and season prizes
-2. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
-3. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
+1. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
+2. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
 
 ---
 
