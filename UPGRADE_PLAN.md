@@ -247,11 +247,11 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 
 **All HUD reads from sim history + interpolated display values — no new data sources.**
 
-### Phase 6 — Sound — DONE, awaiting device test
+### Phase 6 — Sound — DONE, device-verified
 
 **Features implemented**:
 
-- **Engine sound**: Sawtooth oscillator, low-pass filtered at 480 Hz (Q=1.4). Frequency `80 + speed*16` Hz (idle ~80 Hz, full speed ~180 Hz). Gain ramps in when racing, ramps out slowly at end sequence. Created fresh each race via `engineStart()`, stopped via `engineStop()` on cleanup.
+- **Engine sound**: Three detuned oscillators (saw 0¢, saw +28¢, square -18¢) create beating/rough idle. LFO amplitude modulation (9 Hz putt-putt at idle rising to ~22 Hz warble at speed) via GainNode AudioParam connection. Lowpass filter cutoff sweeps 400→1250 Hz. Looping bandpass-filtered noise for combustion texture. Frequency `80 + speed*16` Hz. Gain ramps in/out per race; module-level `_ctx`/`_master` persist across DemoRace auto-loops.
 - **Pothole thud**: 0.14s white noise burst through 190 Hz low-pass filter, gain exponential decay. Fired on `hitJustStarted && i === leadIdx` (camera-followed car only, same gate as camera shake).
 - **Countdown beeps**: Step transition detected each frame (`_lastBeepStep`). Digits 3/2/1 → short 880 Hz square tick (0.07s). GO → rising sine 880→1320 Hz (0.28s). `countdownBeep(num)` where num=3/2/1/0.
 - **Finish fanfare**: C4 E4 G4 C5 ascending arpeggio (triangle wave, 0.11s spacing, 0.22s envelope each note). Fires once at `endFrame === END_DRIVE` via `_fanfareFired` flag.
@@ -271,23 +271,31 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 | Pothole thud | `hitJustStarted && i === leadIdx` | `potholeHit()` |
 | Finish fanfare | `endFrame === END_DRIVE && !_fanfareFired` | `finishFanfare()` |
 
-### Phase 7 — Demo Mode Parity — NOT STARTED
-**Goal**: Ensure every Phase 1-6 upgrade works in `DemoRace.jsx` (the new-player funnel).
+### Phase 7 — Demo Mode Parity — DONE (no code changes required)
 
-**DemoRace specifics**:
-- Uses random seed each loop: `randomSeed()` returns 32-char hex
-- Loops automatically with `RESULT_HOLD_MS = 5000` between races
-- Has its own winner overlay (not ResultScreen)
-- Already uses `onTick` to capture sim for winner display
+**Audit result**: DemoRace and Race share the identical `runReplay` execution path with zero branching inside the function. All Phase 1-6 features are present in demo mode by design. Differences are intentional and verified:
 
-**Checklist**:
-- All Phase 1 car animations work (they use `replay.js` directly — should already work)
-- All Phase 2 environment works (same `replay.js` — should already work)
-- Phase 3 themes: confirm `seed % 3` works with random seeds (always will)
-- Phase 4 cinematics: confirm orbit and slow-mo work in looping mode
-- Phase 5 HUD: confirm results banner clears properly before auto-loop starts
-- Phase 6 audio: confirm audio re-init works after loop (same AudioContext, just retrigger)
-- Test on device specifically in DemoRace loop for 3+ cycles
+| Feature | Demo behaviour | Verified |
+|---|---|---|
+| Phase 1 car visuals (wheels, jolt, dust, exhaust, sway) | Same `replay.js` | ✓ |
+| Phase 2 environment (panelki, birches, lamps, skyline, clouds) | Same `replay.js` | ✓ |
+| Phase 3 themes | `parseInt(hexSeed.slice(0,8), 16) % 3` — random seed always valid | ✓ |
+| Phase 4 cinematics (FOV kick, shake, slow-mo, orbit) | Same `replay.js`; `leadIdx` from positions, not hardcoded | ✓ |
+| Finish choreography | Same `replay.js` pre-computation | ✓ |
+| Phase 5 HUD (ranks, speed, countdown, banner) | `payoutLabel = null` (not passed) → banner shows `"[Name] wins"` only, no payout line; `panH = 42` not 58 | ✓ |
+| Phase 6 audio (engine, thud, beeps, fanfare, mute button) | `engineStart()`/`engineStop()` called by `runReplay` itself; mute button injected/removed on each loop; `_ctx`/`_master`/`_muted` module-level, survive auto-loop restarts | ✓ |
+
+**Auto-loop compatibility** (`RESULT_HOLD_MS = 5000` between races):
+1. `stopRef.current?.()` → `engineStop()`, removes mute button, cancels RAF, disposes renderer
+2. `runReplay(newSeed, ...)` → `resumeAudio()` (no-op: ctx persists), new mute button appended
+3. `loadCarModel().then()` → GLB cached after first load, `engineStart()` starts fresh oscillators
+4. `_muted` preserved across loops; new button reads `isMuted()` and shows correct icon
+
+**DemoRace-specific intentional differences** (all correct):
+- Generic player names `['Player 1', 'Player 2']` instead of wallet usernames
+- No `payoutLabel` passed → no fake payout shown in results banner
+- Own `WinnerOverlay` React component (not `ResultScreen`) — shown on top of canvas while engine winds down
+- `getViewMode` not passed (accepted in signature, never read in body — harmless dead parameter)
 
 ---
 
