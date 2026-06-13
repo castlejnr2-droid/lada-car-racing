@@ -321,16 +321,22 @@ FINISH_BLEND_DIST=TRACK_LENGTH*0.18  MIN_VIS_CROSS_GAP=4
 - `frontend/src/App.jsx` — two new routes + `StartParamRedirect` for deep links
 - `frontend/src/components/Home.jsx` — `initialTab` prop + Watch tab
 
-**Remaining gap — NOT YET BUILT**: There is no UI share button to generate deep links. A user watching a race has no way to share it to another person. Next task: add a Share button to `SpectatorWatch` (and optionally to the watch-list cards) that constructs `t.me/<bot>/<app>?startapp=r_<raceId>` and calls `WebApp.openTelegramLink` or copies to clipboard. The bot/app name must be read from an env var so it is not hardcoded.
+**Share button — DONE (commit f5f781e)**:
+- `📤 Share` button in `SpectatorWatch` (top-right corner, matches SPECTATING badge style; also in race-over overlay alongside "Back to watch list")
+- `📤 Share` button on each `WatchTab` race card (`e.stopPropagation()` prevents card click from firing)
+- `frontend/src/lib/share.js` — single module with `raceDeepLink(raceId)` and `shareRace(raceId)`
+- Bot/app name read from `VITE_TG_BOT` / `VITE_TG_APP` env vars; defaults to `LadaCarRacingBot` / `play`
+- Share path: `WebApp.openTelegramLink` with `https://t.me/share/url?url=<deepLink>&text=Watch this LADA race`
+- Clipboard fallback: `navigator.clipboard.writeText(deepLink)` with 2s "Link copied" toast
+- Round trip confirmed: generated link `startapp=r_<raceId>` matches exactly what `StartParamRedirect` parses
 
 ---
 
 ## Follow-up Roadmap
 
-1. **Share button for spectator deep links** — NEXT: share button in SpectatorWatch, generates `r_<raceId>` Telegram link
-2. **Leaderboard seasons** — backend already has leaderboard; add season resets and season prizes
-3. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
-4. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
+1. **Leaderboard seasons** — NEXT: backend already has leaderboard; add season resets and season prizes
+2. **3+ player races** — physics already supports arbitrary lane count; UI and contract changes needed
+3. **Cosmetic Lada skins as token sink** — purchasable GLB model variants or tints, stored per address
 
 ---
 
