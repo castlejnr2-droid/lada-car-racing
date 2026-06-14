@@ -391,12 +391,15 @@ export function runReplay(canvas, hexSeed, {
   // Each subsystem is individually guarded so one failure never prevents the
   // others from running. The overlay shows exactly which one threw.
   const _subsystems = [
-    ['buildRoad',          () => buildRoad(scene, N, laneX, track, theme)],
-    ['buildPanelki',       () => buildPanelki(scene, rng)],
-    ['buildBirchTrees',    () => buildBirchTrees(scene, rng, theme)],
-    ['buildLampPosts',     () => buildLampPosts(scene)],
-    ['buildRoadFurniture', () => buildRoadFurniture(scene)],
-    ['buildSkyline',       () => buildSkyline(scene)],
+    ['buildRoad',           () => buildRoad(scene, N, laneX, track, theme)],
+    ['buildPanelki',        () => buildPanelki(scene, rng)],
+    ['buildBirchTrees',     () => buildBirchTrees(scene, rng, theme)],
+    ['buildLampPosts',      () => buildLampPosts(scene)],
+    ['buildRoadFurniture',  () => buildRoadFurniture(scene)],
+    ['buildCyrillicSigns',  () => buildCyrillicSigns(scene)],
+    ['buildGuardrails',     () => buildGuardrails(scene, theme)],
+    ['buildTransformerBoxes', () => buildTransformerBoxes(scene)],
+    ['buildSkyline',        () => buildSkyline(scene)],
   ];
   for (const [_name, _fn] of _subsystems) {
     try { _fn(); console.log('[replay] subsystem OK:', _name); }
@@ -1397,6 +1400,236 @@ function buildRoadFurniture(scene) {
     const face = new THREE.Mesh(new THREE.BoxGeometry(6.5, 3.2, 0.1), bbMat);
     face.position.set(bbX, bbH + 1.6, z + 0.2);
     scene.add(face);
+
+    // Cyrillic text plane over the face — canvas-generated, DoubleSide
+    const bbTextDefs = [
+      { line1: 'ЛАДА',       line2: 'Официальный дилер' },
+      { line1: 'ГАЗПРОМ',    line2: 'Энергия страны'    },
+      { line1: 'АВТОДОР',    line2: 'Работаем 24 часа'  },
+    ];
+    const btd = bbTextDefs[i % bbTextDefs.length];
+    const btc = document.createElement('canvas');
+    btc.width = 256; btc.height = 96;
+    const btx = btc.getContext('2d');
+    btx.clearRect(0, 0, 256, 96);
+    btx.fillStyle = 'rgba(255,255,255,0.14)';
+    btx.fillRect(0, 0, 256, 5);
+    btx.fillRect(0, 91, 256, 5);
+    btx.fillStyle = '#ffffff';
+    btx.textAlign = 'center';
+    btx.font = 'bold 34px sans-serif';
+    btx.textBaseline = 'alphabetic';
+    btx.fillText(btd.line1, 128, 54);
+    btx.font = '17px sans-serif';
+    btx.fillStyle = 'rgba(255,255,255,0.82)';
+    btx.fillText(btd.line2, 128, 76);
+    const bbTexFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(6.0, 2.8),
+      new THREE.MeshLambertMaterial({ map: new THREE.CanvasTexture(btc), transparent: true, side: THREE.DoubleSide }),
+    );
+    bbTexFace.position.set(bbX, bbH + 1.6, z + 0.26);
+    scene.add(bbTexFace);
+  }
+}
+
+// ─── Cyrillic road signs ───────────────────────────────────────────────────────
+// Blue rectangular directional signs + red/white warning triangles on low-poly
+// posts. All posts merged into 1 draw call. Textures generated once at build
+// time (never per-frame). Each unique sign face = 1 draw call (4 directional +
+// 1 merged warning = 5 draw calls total for all signs).
+function buildCyrillicSigns(scene) {
+  const SIGN_EDGE = ROAD_W / 2 + 2.8;  // matches existing sign X offset
+  const POLE_H    = 4.2;
+
+  // Directional blue sign canvas (standard Russian highway sign style)
+  function makeDirTex(line1, line2) {
+    const CW = 256, CH = line2 ? 82 : 60;
+    const c   = document.createElement('canvas');
+    c.width = CW; c.height = CH;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#1535a0';
+    ctx.fillRect(0, 0, CW, CH);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth   = 4;
+    ctx.strokeRect(4, 4, CW - 8, CH - 8);
+    ctx.fillStyle   = '#ffffff';
+    ctx.textAlign   = 'center';
+    if (line2) {
+      ctx.font          = 'bold 26px sans-serif';
+      ctx.textBaseline  = 'alphabetic';
+      ctx.fillText(line1, CW / 2, 48);
+      ctx.font          = '17px sans-serif';
+      ctx.fillStyle     = 'rgba(255,255,255,0.85)';
+      ctx.fillText(line2, CW / 2, 70);
+    } else {
+      ctx.font         = 'bold 26px sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(line1, CW / 2, CH / 2);
+    }
+    return new THREE.CanvasTexture(c);
+  }
+
+  // Warning triangle: white field, thick red border, red exclamation mark
+  const _warnC = document.createElement('canvas');
+  _warnC.width = 128; _warnC.height = 128;
+  {
+    const ctx = _warnC.getContext('2d');
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.fillStyle = '#f8f4ec';
+    ctx.beginPath();
+    ctx.moveTo(64, 7); ctx.lineTo(120, 117); ctx.lineTo(8, 117);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#cc1111'; ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(64, 7); ctx.lineTo(120, 117); ctx.lineTo(8, 117);
+    ctx.closePath(); ctx.stroke();
+    ctx.fillStyle    = '#cc1111';
+    ctx.font         = 'bold 52px sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('!', 64, 80);
+  }
+  const warnTex = new THREE.CanvasTexture(_warnC);
+
+  // Sign placement: alternate left/right, spread along track, avoid existing signs
+  const DIRS = [
+    { z: -TRACK_LENGTH * 0.12, sx:  SIGN_EDGE, line1: 'МОСКВА',    line2: '180 км' },
+    { z: -TRACK_LENGTH * 0.38, sx: -SIGN_EDGE, line1: 'ТВЕРЬ',     line2: '42 км'  },
+    { z: -TRACK_LENGTH * 0.62, sx:  SIGN_EDGE, line1: 'ТОРЖОК'                      },
+    { z: -TRACK_LENGTH * 0.87, sx: -SIGN_EDGE, line1: 'ЯРОСЛАВЛЬ', line2: '95 км'  },
+  ];
+  const WARNS = [
+    { z: -TRACK_LENGTH * 0.26, sx: -SIGN_EDGE },
+    { z: -TRACK_LENGTH * 0.75, sx:  SIGN_EDGE },
+  ];
+
+  // ── All posts merged into 1 draw call ────────────────────────────────────
+  const poleMat  = new THREE.MeshLambertMaterial({ color: 0x808088 });
+  const poleGeos = [];
+  for (const def of DIRS) {
+    // Directional signs: 2 posts spanning sign width
+    const spread = def.sx > 0 ? 1.8 : -1.8;
+    for (const dx of [0, spread]) {
+      const pg = new THREE.CylinderGeometry(0.05, 0.07, POLE_H, 5);
+      pg.translate(def.sx + dx, POLE_H / 2, def.z);
+      poleGeos.push(pg);
+    }
+  }
+  for (const def of WARNS) {
+    // Warning signs: 1 post
+    const pg = new THREE.CylinderGeometry(0.05, 0.07, POLE_H, 5);
+    pg.translate(def.sx, POLE_H / 2, def.z);
+    poleGeos.push(pg);
+  }
+  if (poleGeos.length) {
+    scene.add(new THREE.Mesh(mergeGeometries(poleGeos), poleMat));
+    poleGeos.forEach(g => g.dispose());
+  }
+
+  // ── Directional sign faces — 1 draw call each (unique texture per label) ─
+  for (const def of DIRS) {
+    const tex    = makeDirTex(def.line1, def.line2);
+    const signH  = def.line2 ? 1.12 : 0.82;
+    const spread = def.sx > 0 ? 1.8 : -1.8;
+    const ctrX   = def.sx + spread / 2;
+    const mat    = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+    const mesh   = new THREE.Mesh(new THREE.PlaneGeometry(3.4, signH), mat);
+    mesh.position.set(ctrX, POLE_H - signH / 2 - 0.1, def.z);
+    if (def.sx > 0) mesh.rotation.y = Math.PI;  // face toward road
+    scene.add(mesh);
+  }
+
+  // ── Warning sign faces — 1 merged draw call (shared texture) ─────────────
+  const warnMat  = new THREE.MeshLambertMaterial({
+    map: warnTex, side: THREE.DoubleSide, transparent: true, alphaTest: 0.04,
+  });
+  const warnGeos = [];
+  for (const def of WARNS) {
+    const wg = new THREE.PlaneGeometry(1.3, 1.3);
+    wg.translate(def.sx, POLE_H - 0.25, def.z);
+    warnGeos.push(wg);
+  }
+  if (warnGeos.length) {
+    const merged = mergeGeometries(warnGeos);
+    warnGeos.forEach(g => g.dispose());
+    scene.add(new THREE.Mesh(merged, warnMat));
+  }
+}
+
+// ─── Concrete roadside barriers ────────────────────────────────────────────────
+// Short jersey-style concrete barriers along the shoulder in 4 tasteful segments.
+// All geometry merged into 1 draw call. Color responds to active theme.
+function buildGuardrails(scene, theme) {
+  const isSnow = theme === THEME_SNOW;
+  const isDusk = theme === THEME_DUSK;
+  // Concrete colour: cool grey in snow, warm/dim in dusk, standard in day
+  const concreteColor = isSnow ? 0xbcc2ce : isDusk ? 0x8c8478 : 0xaaa49c;
+  const mat  = new THREE.MeshLambertMaterial({ color: concreteColor });
+  const geos = [];
+
+  // Barriers sit just outside the road edge (on the grass shoulder)
+  const BX   = ROAD_W / 2 + 0.45;  // offset from road centre: road edge + gap
+  const BH   = 0.62;               // barrier height (jersey barrier proportions)
+  const BW   = 0.42;               // top width
+  const BASE = BW + 0.20;          // base flange width
+
+  // [side, zStart, zLength] — covers ~35% of track in 4 segments
+  const SEGS = [
+    [-1, -TRACK_LENGTH * 0.04, TRACK_LENGTH * 0.13],
+    [ 1, -TRACK_LENGTH * 0.28, TRACK_LENGTH * 0.11],
+    [-1, -TRACK_LENGTH * 0.55, TRACK_LENGTH * 0.14],
+    [ 1, -TRACK_LENGTH * 0.78, TRACK_LENGTH * 0.12],
+  ];
+
+  for (const [side, zStart, zLen] of SEGS) {
+    const bx   = side * BX;
+    const midZ = zStart - zLen / 2;
+    // Main body
+    const bg = new THREE.BoxGeometry(BW, BH, zLen);
+    bg.translate(bx, BH / 2, midZ);
+    geos.push(bg);
+    // Base flange (wider, thin slab at ground level)
+    const fl = new THREE.BoxGeometry(BASE, 0.10, zLen);
+    fl.translate(bx, 0.05, midZ);
+    geos.push(fl);
+  }
+
+  if (geos.length) {
+    const merged = mergeGeometries(geos);
+    geos.forEach(g => g.dispose());
+    scene.add(new THREE.Mesh(merged, mat));
+  }
+}
+
+// ─── Transformer boxes on power line poles ─────────────────────────────────────
+// Small dark-grey boxes clamped to every 3rd lamp post, merged into 1 draw call.
+// Adds electrical infrastructure detail without meaningful draw-call cost.
+function buildTransformerBoxes(scene) {
+  const POLE_H  = 7;
+  const SIDE_X  = ROAD_W / 2 + 1.8;   // matches buildLampPosts
+  const COUNT   = 12;                   // matches buildLampPosts
+  const MOUNT_Y = POLE_H * 0.52;       // height on pole (~midpoint)
+  const BH = 0.50, BW = 0.34, BD = 0.22;
+
+  const mat  = new THREE.MeshLambertMaterial({ color: 0x484c54 });
+  const geos = [];
+
+  for (const sx of [-SIDE_X, SIDE_X]) {
+    for (let i = 0; i < COUNT; i++) {
+      if (i % 3 !== 1) continue;   // every 3rd post
+      const wz = -(i / (COUNT - 1)) * TRACK_LENGTH;
+      // Box sits on the pole face away from road
+      const offsetX = sx > 0 ? BD / 2 : -BD / 2;
+      const bg = new THREE.BoxGeometry(BW, BH, BD);
+      bg.translate(sx + offsetX, MOUNT_Y, wz);
+      geos.push(bg);
+    }
+  }
+
+  if (geos.length) {
+    const merged = mergeGeometries(geos);
+    geos.forEach(g => g.dispose());
+    scene.add(new THREE.Mesh(merged, mat));
   }
 }
 

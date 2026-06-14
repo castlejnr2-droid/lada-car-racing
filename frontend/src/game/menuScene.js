@@ -196,6 +196,9 @@ export function startMenuScene(canvas) {
   const { buildingMats }        = buildMenuBuildings(scene);
   const { leafMat, trunkMat }   = buildMenuTrees(scene);
   buildMenuLampPosts(scene);
+  buildMenuCyrillicSigns(scene);
+  buildMenuGuardrails(scene);
+  buildMenuTransformerBoxes(scene);
 
   // ── Camera ────────────────────────────────────────────────────────────────
   const camera = new THREE.PerspectiveCamera(62, W / H, 0.5, 300);
@@ -664,4 +667,192 @@ function buildMenuLampPosts(scene) {
   scene.add(new THREE.Mesh(mergeGeometries(headGeos), headMat));
   scene.add(new THREE.Mesh(mergeGeometries(glowGeos), glowMat));
   [...poleGeos, ...armGeos, ...headGeos, ...glowGeos].forEach((g) => g.dispose());
+}
+
+// ── Cyrillic road signs ───────────────────────────────────────────────────────
+// Blue rectangular directional signs + warning triangles along the menu boulevard.
+// All posts merged into 1 draw call. Each unique directional face = 1 draw call.
+// Textures generated once at init — never per-frame. No per-frame allocations.
+function buildMenuCyrillicSigns(scene) {
+  const SIGN_EDGE = ROAD_HALF + 2.8;
+  const POLE_H    = 4.0;
+  const ROAD_LEN  = Z_FRONT - Z_BACK;  // 320 units
+
+  // Directional blue canvas — standard Russian highway style
+  function makeDirTex(line1, line2) {
+    const CW = 256, CH = line2 ? 82 : 60;
+    const c   = document.createElement('canvas');
+    c.width = CW; c.height = CH;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#1535a0';
+    ctx.fillRect(0, 0, CW, CH);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth   = 4;
+    ctx.strokeRect(4, 4, CW - 8, CH - 8);
+    ctx.fillStyle   = '#ffffff';
+    ctx.textAlign   = 'center';
+    if (line2) {
+      ctx.font         = 'bold 26px sans-serif';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(line1, CW / 2, 48);
+      ctx.font      = '17px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(line2, CW / 2, 70);
+    } else {
+      ctx.font         = 'bold 26px sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(line1, CW / 2, CH / 2);
+    }
+    return new THREE.CanvasTexture(c);
+  }
+
+  // Warning triangle — shared across all warning signs
+  const _wc = document.createElement('canvas');
+  _wc.width = 128; _wc.height = 128;
+  {
+    const ctx = _wc.getContext('2d');
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.fillStyle = '#f8f4ec';
+    ctx.beginPath();
+    ctx.moveTo(64, 7); ctx.lineTo(120, 117); ctx.lineTo(8, 117);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#cc1111'; ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(64, 7); ctx.lineTo(120, 117); ctx.lineTo(8, 117);
+    ctx.closePath(); ctx.stroke();
+    ctx.fillStyle    = '#cc1111';
+    ctx.font         = 'bold 52px sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('!', 64, 80);
+  }
+  const warnTex = new THREE.CanvasTexture(_wc);
+
+  // Place signs along the 320-unit menu boulevard
+  const DIRS = [
+    { z: Z_FRONT - ROAD_LEN * 0.10, sx:  SIGN_EDGE, line1: 'МОСКВА',    line2: '180 км' },
+    { z: Z_FRONT - ROAD_LEN * 0.35, sx: -SIGN_EDGE, line1: 'ТВЕРЬ',     line2: '42 км'  },
+    { z: Z_FRONT - ROAD_LEN * 0.60, sx:  SIGN_EDGE, line1: 'ТОРЖОК'                      },
+    { z: Z_FRONT - ROAD_LEN * 0.85, sx: -SIGN_EDGE, line1: 'ЯРОСЛАВЛЬ', line2: '95 км'  },
+  ];
+  const WARNS = [
+    { z: Z_FRONT - ROAD_LEN * 0.24, sx: -SIGN_EDGE },
+    { z: Z_FRONT - ROAD_LEN * 0.72, sx:  SIGN_EDGE },
+  ];
+
+  // All posts into 1 merged draw call
+  const poleMat  = new THREE.MeshLambertMaterial({ color: 0x808088 });
+  const poleGeos = [];
+  for (const def of DIRS) {
+    const spread = def.sx > 0 ? 1.8 : -1.8;
+    for (const dx of [0, spread]) {
+      const pg = new THREE.CylinderGeometry(0.05, 0.07, POLE_H, 5);
+      pg.translate(def.sx + dx, POLE_H / 2, def.z);
+      poleGeos.push(pg);
+    }
+  }
+  for (const def of WARNS) {
+    const pg = new THREE.CylinderGeometry(0.05, 0.07, POLE_H, 5);
+    pg.translate(def.sx, POLE_H / 2, def.z);
+    poleGeos.push(pg);
+  }
+  if (poleGeos.length) {
+    const merged = mergeGeometries(poleGeos);
+    poleGeos.forEach((g) => g.dispose());
+    scene.add(new THREE.Mesh(merged, poleMat));
+  }
+
+  // Directional sign faces — 1 draw call each (unique texture)
+  for (const def of DIRS) {
+    const tex    = makeDirTex(def.line1, def.line2);
+    const signH  = def.line2 ? 1.12 : 0.82;
+    const spread = def.sx > 0 ? 1.8 : -1.8;
+    const ctrX   = def.sx + spread / 2;
+    const mat    = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+    const mesh   = new THREE.Mesh(new THREE.PlaneGeometry(3.4, signH), mat);
+    mesh.position.set(ctrX, POLE_H - signH / 2 - 0.1, def.z);
+    if (def.sx > 0) mesh.rotation.y = Math.PI;
+    scene.add(mesh);
+  }
+
+  // Warning sign faces — merged into 1 draw call (shared texture)
+  const warnMat  = new THREE.MeshLambertMaterial({
+    map: warnTex, side: THREE.DoubleSide, transparent: true, alphaTest: 0.04,
+  });
+  const warnGeos = [];
+  for (const def of WARNS) {
+    const wg = new THREE.PlaneGeometry(1.3, 1.3);
+    wg.translate(def.sx, POLE_H - 0.25, def.z);
+    warnGeos.push(wg);
+  }
+  if (warnGeos.length) {
+    const merged = mergeGeometries(warnGeos);
+    warnGeos.forEach((g) => g.dispose());
+    scene.add(new THREE.Mesh(merged, warnMat));
+  }
+}
+
+// ── Concrete roadside barriers (menu scene) ──────────────────────────────────
+// Jersey-style barriers in 4 segments along the shoulder. Merged into 1 draw
+// call. Static — no per-frame update. Ambient lighting handles day/dusk shift.
+function buildMenuGuardrails(scene) {
+  const BX   = ROAD_HALF + 0.45;  // just outside road edge
+  const BH   = 0.62;
+  const BW   = 0.42;
+  const BASE = BW + 0.20;
+  const ROAD_LEN = Z_FRONT - Z_BACK;
+
+  const mat  = new THREE.MeshLambertMaterial({ color: 0xaaa49c });
+  const geos = [];
+
+  const SEGS = [
+    [-1, Z_FRONT - ROAD_LEN * 0.04,  ROAD_LEN * 0.13],
+    [ 1, Z_FRONT - ROAD_LEN * 0.30,  ROAD_LEN * 0.11],
+    [-1, Z_FRONT - ROAD_LEN * 0.55,  ROAD_LEN * 0.14],
+    [ 1, Z_FRONT - ROAD_LEN * 0.78,  ROAD_LEN * 0.12],
+  ];
+
+  for (const [side, zStart, zLen] of SEGS) {
+    const bx   = side * BX;
+    const midZ = zStart - zLen / 2;
+    const bg = new THREE.BoxGeometry(BW, BH, zLen);
+    bg.translate(bx, BH / 2, midZ);
+    geos.push(bg);
+    const fl = new THREE.BoxGeometry(BASE, 0.10, zLen);
+    fl.translate(bx, 0.05, midZ);
+    geos.push(fl);
+  }
+
+  if (geos.length) {
+    const merged = mergeGeometries(geos);
+    geos.forEach((g) => g.dispose());
+    scene.add(new THREE.Mesh(merged, mat));
+  }
+}
+
+// ── Transformer boxes on lamp posts (menu scene) ─────────────────────────────
+// Small dark boxes on every 3rd pole. Merged into 1 draw call. No per-frame work.
+function buildMenuTransformerBoxes(scene) {
+  const MOUNT_Y = POLE_H * 0.52;
+  const BH = 0.50, BW = 0.34, BD = 0.22;
+
+  const mat  = new THREE.MeshLambertMaterial({ color: 0x484c54 });
+  const geos = [];
+
+  for (const sx of [-LAMP_SIDE_X, LAMP_SIDE_X]) {
+    for (let i = 0; i < LAMP_COUNT; i++) {
+      if (i % 3 !== 1) continue;
+      const wz      = Z_FRONT - i * LAMP_SPACING;
+      const offsetX = sx > 0 ? BD / 2 : -BD / 2;
+      const bg      = new THREE.BoxGeometry(BW, BH, BD);
+      bg.translate(sx + offsetX, MOUNT_Y, wz);
+      geos.push(bg);
+    }
+  }
+
+  if (geos.length) {
+    const merged = mergeGeometries(geos);
+    geos.forEach((g) => g.dispose());
+    scene.add(new THREE.Mesh(merged, mat));
+  }
 }
